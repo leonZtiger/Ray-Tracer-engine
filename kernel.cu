@@ -809,7 +809,7 @@ public:
 		mesh1 = new mesh(file);
 		mesh1->allocMem();
 		s1 = new sphere[sphere_count];
-		planes = new plane({ 0,-20,0 }, { 0,1, 0 });
+		planes = new plane({ 0,-50,0 }, { 0,1, 0 });
 
 		for (int i = 0; i < sphere_count; i++) {
 			s1[i] = sphere({ (float)(rand() % 100) / 10 ,0 ,(float)(rand() % 100) / 10 }, (float)(rand() % 100) / 100);
@@ -836,7 +836,7 @@ public:
 		return sizeof(float) * 8 * sphere_count;
 	}
 
-	int sphere_count = 5, plane_count = 0;
+	int sphere_count = 5, plane_count = 1;
 	int depth = 3;
 	sphere* s1;
 	sphere* d_spheres;
@@ -945,7 +945,7 @@ bool rayIntersect(ray& ray, triangle& tri, float& t, float& u, float& v) {
 
 }
 __device__
-bool castRay(object &objs,ray &cam_ray,int &hit_type,int &hit_index,float &nt,float&nu,float &nv) {
+bool castRay(object &objs,ray &cam_ray,int &hit_type,int &hit_index,float &nt,float&nu,float &nv,vec3d & new_org,vec3d &normal,float & tx, float &ty) {
 	
 	nt = INFINITY;
 	//check for triangle intersection
@@ -996,8 +996,51 @@ bool castRay(object &objs,ray &cam_ray,int &hit_type,int &hit_index,float &nt,fl
 			}
 		}
 	}
-	if (nt != INFINITY)
+	if (nt != INFINITY) {
+		//check what type of object the ray hitted and calculate the normal 
+        // 0 = triangle, 1 = sphere, 2 = plane
+		//triangle hit
+		if (hit_type == 0) {
+
+			if (objs.mesh1->has_normals) {
+				normal = add(add(multiply(objs.mesh1->d_tri_arr[hit_index].vecNormal[0], (1 - nu - nv)), multiply(objs.mesh1->d_tri_arr[hit_index].vecNormal[1], nu)), multiply(objs.mesh1->d_tri_arr[hit_index].vecNormal[2], nv));
+				normal = normalise(normal);
+			}
+
+			else {
+				normal = objs.mesh1->d_tri_arr[hit_index].normal;
+			}
+			//calc the texture vertices
+			tx = ((1 - nu - nv) * objs.mesh1->d_tri_arr[hit_index].vt[0].u) + (nu * objs.mesh1->d_tri_arr[hit_index].vt[1].u) + (nv * objs.mesh1->d_tri_arr[hit_index].vt[2].u);  //(int)(((nu + 1.0f) / 2.0f) * maxX)-1;
+			ty = ((1 - nu - nv) * objs.mesh1->d_tri_arr[hit_index].vt[0].v) + (nu * objs.mesh1->d_tri_arr[hit_index].vt[1].v) + (nv * objs.mesh1->d_tri_arr[hit_index].vt[2].v);//((float)maxY -((nv + 1.0f) / 2.0f) * maxY)-1;
+
+			new_org = add(normal, add(cam_ray.Org, multiply(cam_ray.Dir, nt)));
+		}
+		//sphere hit
+		if (hit_type == 1) {
+
+			new_org = add(cam_ray.Org, multiply(cam_ray.Dir, nt));
+			normal = sub(new_org, objs.d_spheres[hit_index].orgin);
+			normal = normalise(normal);
+			//calc the texture vertices
+			tx = (1 + atan2(normal.z, normal.x) / 3.1415) * 0.5;
+			ty = acosf(normal.y) / 3.1415;
+
+		}
+		//plane hit
+		if (hit_type == 2) {
+			new_org = add(cam_ray.Org, multiply(cam_ray.Dir, nt));
+			normal = objs.d_planes[hit_index].normal;
+			normal = normalise(normal);
+
+			//texture vertices
+			tx = 0.5; //hit_point.x;
+			ty = 0.5;//hit_point.z* mod(1.f);
+
+		}
 		return true;
+	}
+		
 	
 	return false;
 }
@@ -1007,7 +1050,7 @@ void globalilumnation(object objs, ray reflect_ray) {
 	float nv, nu, n_t;
 	int hit_type, hit_index;
 
-	if (castRay(objs, reflect_ray, hit_type, hit_index, n_t, nu, nv)) {
+//	if (castRay(objs, reflect_ray, hit_type, hit_index, n_t, nu, nv)) {
 /*
 		float r_tx, r_ty;
 		vec3d r_normal;
@@ -1063,11 +1106,11 @@ void globalilumnation(object objs, ray reflect_ray) {
 		b *= objs.mat->reflectivness * temp_b;
 
 		break;*/
-	}
+//	}
 
 }
 __global__ 
-void rayTrace(unsigned int* pixels, int width, int height, float aspect, object& objs, light* lights, int light_size, camera cam, skybox& sky, matrix rotation) {//,int *texr,int tW,int tH) {
+void rayTrace(unsigned int* pixels, int width, int height, float aspect, object& objs, light* lights, int light_size, camera cam, skybox& sky) {
 
 	int y = threadIdx.y + blockIdx.y * blockDim.y;
 	int x = threadIdx.x + blockIdx.x * blockDim.x;
@@ -1078,75 +1121,23 @@ void rayTrace(unsigned int* pixels, int width, int height, float aspect, object&
 
 		float dx = aspect * (2 * (x + 0.5) / (float)width) - 1 ;
 		float dy = aspect * (2 * (y + 0.5) / (float)height)*((float)height/width) - 1;
-	//float dx = float(x) / float(width) - 0.5;//aspect * (( (width/ 2)-x) / (float)(width/2));
-	//float dy = float(y) / float(height) - 0.5;  //((float)height/width)*aspect *  ((height/2)-y) / ((float)height/2);
 	float nu, nv, n_t;
 
-//	vec3d dir = normalise(vec3d({ dx,dy,-1 }));
-	// dir = normalise(add(cam.add(cam.f,multiply(cam.viewPlaneW, dx), multiply(cam.v, dy)), cam.w));
-//	vec3d disk = cam.Rand_disk();
-//	vec3d offset = add(multiply(cam.u, disk.x), multiply(cam.v, disk.y));
-
-//	vec3d dir = normalise(sub(sub(add(cam.lower_left, add(multiply(cam.horizontal, dx), multiply(cam.vertical, dy))), cam.Org), offset));
 	vec3d eyePos({0,0,(-1/aspect)});
 	vec3d dir = vec3d({ dx,dy,0 });
 	ray cam_ray(add(eyePos,cam.Org),cam.rotateDir(normalise(sub(dir,eyePos))));
     
 	int hit_index;
 	int hit_type;
-
+	vec3d new_org;
+	vec3d normal;
+	float tx, ty;
 	//if no ray intersect set the color of the skybox 
-	if (castRay(objs, cam_ray, hit_type, hit_index, n_t, nu, nv)) {
-
+	if (castRay(objs, cam_ray, hit_type, hit_index, n_t, nu, nv,new_org,normal,tx,ty)) {
 
 
 		int maxX = objs.texture->width;
 		int maxY = objs.texture->height;
-
-		float tx, ty;
-		//check what type of object the ray hitted and calculate the normal 
-		// 0 = triangle, 1 = sphere, 2 = plane
-		vec3d new_org;
-		vec3d normal;
-		//triangle hit
-		if (hit_type == 0) {
-
-			if (objs.mesh1->has_normals) {
-				normal = add(add(multiply(objs.mesh1->d_tri_arr[hit_index].vecNormal[0], (1 - nu - nv)), multiply(objs.mesh1->d_tri_arr[hit_index].vecNormal[1], nu)), multiply(objs.mesh1->d_tri_arr[hit_index].vecNormal[2], nv));
-				normal = normalise(normal);
-			}
-
-			else {
-				normal = objs.mesh1->d_tri_arr[hit_index].normal;
-			}
-			//calc the texture vertices
-			tx = ((1 - nu - nv) * objs.mesh1->d_tri_arr[hit_index].vt[0].u) + (nu * objs.mesh1->d_tri_arr[hit_index].vt[1].u) + (nv * objs.mesh1->d_tri_arr[hit_index].vt[2].u);  //(int)(((nu + 1.0f) / 2.0f) * maxX)-1;
-			ty = ((1 - nu - nv) * objs.mesh1->d_tri_arr[hit_index].vt[0].v) + (nu * objs.mesh1->d_tri_arr[hit_index].vt[1].v) + (nv * objs.mesh1->d_tri_arr[hit_index].vt[2].v);//((float)maxY -((nv + 1.0f) / 2.0f) * maxY)-1;
-
-			new_org = add(normal, add(cam_ray.Org, multiply(cam_ray.Dir, n_t)));
-		}
-		//sphere hit
-		if (hit_type == 1) {
-
-			new_org = add(cam_ray.Org, multiply(cam_ray.Dir, n_t));
-			normal = sub(new_org, objs.d_spheres[hit_index].orgin);
-			normal = normalise(normal);
-			//calc the texture vertices
-			tx = (1 + atan2(normal.z, normal.x) / 3.1415) * 0.5;
-			ty = acosf(normal.y) / 3.1415;
-
-		}
-		//plane hit
-		if (hit_type == 2) {
-			new_org = add(cam_ray.Org, multiply(cam_ray.Dir, n_t));
-			normal = objs.d_planes[hit_index].normal;
-			normal = normalise(normal);
-
-			//texture vertices
-			tx = 0.5; //hit_point.x;
-			ty = 0.5;//hit_point.z* mod(1.f);
-
-		}
 
 		vec3d reflect_dir = reflect(cam_ray.Dir, normal);
 
@@ -1155,17 +1146,28 @@ void rayTrace(unsigned int* pixels, int width, int height, float aspect, object&
 
 		int c_index = (int)(ty * maxY) * maxX + (int)(tx * maxX);
 
-		float dr = 0, dg = 0, db = 0;
+		float dr = 1, dg = 1, db = 1;
 		float r = objs.texture->rBuff->data[c_index], g = objs.texture->gBuff->data[c_index], b = objs.texture->bBuff->data[c_index];
 
 		//calculate the global ilumination the object recives
 		// im jusing a routhness value to ditermen how many rays should be cast
-	//	for (int depth = 0; depth < 1; depth++) {
-	//		int rays = objs.mat->roughness*10+1;
-
-		//	globalilumnation <<<1, rays>>> (objs,reflect_ray);
+		for (int depth = 0; depth < 4; depth++) {
+		//	int rays = objs.mat->roughness*10+1;
+        //	globalilumnation <<<1, rays>>> (objs,reflect_ray);
 		//	cudaDeviceSynchronize();
-	//	}
+
+			if (castRay(objs, reflect_ray, hit_type, hit_index, n_t, nu, nv,new_org, normal, tx, ty)) {
+				c_index = (int)(ty * maxY) * maxX + (int)(tx * maxX);
+				r *= objs.texture->rBuff->data[c_index], g *= objs.texture->gBuff->data[c_index], b *= objs.texture->bBuff->data[c_index];
+				
+				reflect_ray.Dir = reflect(reflect_ray.Dir,normal);
+				reflect_ray.Org = new_org;
+			}
+			else {
+			    sky.getFColor(reflect_ray,r,g,b);
+				break;
+			}
+		}
 	
 		//calc light value
 		for (int i = 0; i < light_size; i++)
@@ -1188,12 +1190,11 @@ void rayTrace(unsigned int* pixels, int width, int height, float aspect, object&
 			}
 			if (!shadow) {
 				float angle = dotproduct(normal, light_ray.Dir);
-				float brightness = 0.f < angle ? angle : 0.f;
+				float brightness = 0.f < angle ? angle : 0.1f;
 
-				dr += 0.8 * 1 * brightness * r;// * lights[i].r*r;
-				dg += 0.8 * 1 * brightness * g;//* lights[i].g*g;
-				db += 0.8 * 1 * brightness * b; ////* b * lights[i].b*b;
-
+				dr *= 0.8 * brightness * r;// * lights[i].r*r;
+				dg *= 0.8 * brightness * g;//* lights[i].g*g;
+				db *= 0.8 * brightness * b; ////* b * lights[i].b*b;
 			}
 			else {
 				dr *= 0.5 * r;
@@ -1223,63 +1224,47 @@ int lightByteSize = sizeof(float) * 10;
 object* objs = new object();
 skybox* Skybox = new skybox("C:\\Users\\Leon\\Downloads\\sky_box.jpg",10000);
 float aspect = tan((90 * 0.5 * 3.1415) / 180);
+float yawY = 0,yawX = 0;
 
 void onStart() {
-	
-//	
-//if (!objs.loadmesh("C:\\Users\\Leon\\Downloads\\sphere.obj"))
-//system("pause");
 
-	objs->loadMesh("C:\\Users\\Leon\\Downloads\\Teepot.obj", "C:\\Users\\Leon\\Downloads\\marble.png", material(0,0,0));
-//if (!objs.loadmesh("C:\\Users\\Leon\\Downloads\\e30.obj"))
-//     system("pause");
+	objs->loadMesh("C:\\Users\\Leon\\Downloads\\.obj", "C:\\Users\\Leon\\Downloads\\marble.png", material(0,0,0));
 
 	light m_light({ 10,30,-10 }, 1, 1, 1, 1);
 	light b_light({ 10,30,-10 }, 1, 0, 0.5, 0.5);
 	lights = new light[1] {m_light};
 
 }
-float yawY = 0,yawX = 0;
+
 void checkKey() {
-
-
-
 
 	vec3d point = multiply(vec3d({0,0,-1 }), 0.1);
 	vec3d pointside = multiply(vec3d({ 1,0,0 }), 0.1);
 	vec3d pointUp = multiply(vec3d({ 0,1,0 }), 0.1);
 
-    
-
-//	s_cam.Dir = normalise(multiply(rot_mat, s_cam.Dir));
-
 
 	if (GetKeyState('W') & 0x8000) {
-		cam.Org.z -= 0.1;// = sub(cam.Org, point);
+		cam.Org.z -= 0.1;
 	}
 	
 	if (GetKeyState('S') & 0x8000) {
-		cam.Org.z += 0.1;// = add(cam.Org, point);
+		cam.Org.z += 0.1;
 	}
 	
 	
 	if (GetKeyState('A') & 0x8000) {
-		cam.Org.x += 0.1;//sub(cam.Org, pointside);
+		cam.Org.x += 0.1;
 	}
 	
 	if (GetKeyState('D') & 0x8000) {
-		cam.Org.x -= 0.1;// add(cam.Org, pointside);
+		cam.Org.x -= 0.1;
 
 	}
 	if (GetKeyState('E') & 0x8000) {
 		cam.yaw += 1;
-	//	cam.Dir.x -= 0.05f;
-	
 	}
-
 	if (GetKeyState('Q') & 0x8000) {
 		cam.yaw -= 1;
-	//	cam.Dir.x += 0.05f;
 	}
 	if (GetKeyState('Z') & 0x8000) {
 		cam.pitch += 1;
@@ -1294,9 +1279,6 @@ void checkKey() {
 	if (GetKeyState(VK_SPACE) & 0x8000) {
 		cam.Org = sub(cam.Org, pointUp);
 	}
-//	matrix rot_mat = multiply(rotateY(yawY), rotateX(yawX));	
-//	cam.Dir = multiply(rot_mat, cam.Dir);
-//	cam.lookAt();
 }
 
 
@@ -1309,14 +1291,7 @@ void update() {
 
 	int width = getScreenWidth(), height = getScreenHeight();
 	int pixelSize = width * height * sizeof(unsigned int);
-	
-//	cam.viewPlaneW = tan(90 / 2);
 	cam.aspect = (float)height / width;
-//	cam.viewPlaneH = cam.aspect * cam.viewPlaneW;
-
-	//cam.viewPlaneB = 
-	matrix toW = multiply(rotateY(yawY), rotateX(yawX));
-	//cam.Dir = normalise( multiply(toW, cam.Dir));
 
 	checkCudaErrors(cudaMallocManaged((void**)&pixels, pixelSize));
 	checkCudaErrors(cudaMalloc((void**)&d_lights, lightByteSize));
@@ -1326,7 +1301,7 @@ void update() {
 	dim3 blocks(width / tx + 1, height / ty + 1);
 	dim3 threads(tx, ty);
 
-	rayTrace << <blocks, threads >> > (pixels, width, height, aspect, *objs, d_lights, light_size, cam,*Skybox,toW);//d_r,texWidth,texHeight);
+	rayTrace << <blocks, threads >> > (pixels, width, height, aspect, *objs, d_lights, light_size, cam,*Skybox);
 
 	checkCudaErrors(cudaGetLastError());
 	checkCudaErrors(cudaDeviceSynchronize());
@@ -1336,10 +1311,3 @@ void update() {
 	checkCudaErrors(cudaFree(d_lights));
 	
 }
-/*
-int main() {
-	onStart();
-	while (true) {
-	update();
-	}
-}*/
