@@ -86,7 +86,7 @@ vec3d normalise(vec3d& vec1) {
 		return vec3d({ 0,0,0 });
 }
 __device__ __host__
-matrix multiply(matrix mat1, matrix mat2) {
+matrix multiply(matrix mat2, matrix mat1) {
 	matrix mat;
 	for (int i = 0; i < 4; i++)
 		for (int j = 0; j < 4; j++)
@@ -99,9 +99,9 @@ __device__ __host__
 vec3d multiply(matrix mat, vec3d v1) {
 
 	vec3d v2;
-	v2.x = v1.x * mat.mat[0][0] + v1.y * mat.mat[1][0] + v1.z * mat.mat[2][0];
-	v2.y = v1.x * mat.mat[0][1] + v1.y * mat.mat[1][1] + v1.z * mat.mat[2][1];
-	v2.z = v1.x * mat.mat[0][2] + v1.y * mat.mat[1][2] + v1.z * mat.mat[2][2];
+	v2.x = v1.x * mat.mat[0][0] + v1.y * mat.mat[0][1] + v1.z * mat.mat[0][2];
+	v2.y = v1.x * mat.mat[1][0] + v1.y * mat.mat[1][1] + v1.z * mat.mat[1][2];
+	v2.z = v1.x * mat.mat[2][0] + v1.y * mat.mat[2][1] + v1.z * mat.mat[2][2];
 
 	return v2;
 }
@@ -1145,12 +1145,12 @@ void rayTrace(unsigned int* pixels, int width, int height, float aspect, object&
 
 		//calculate the global ilumination the object recives
 		// im jusing a routhness value to ditermen how many rays should be cast
-		for (int depth = 0; depth < 1; depth++) {
-			int rays = objs.mat->roughness*10+1;
+	//	for (int depth = 0; depth < 1; depth++) {
+	//		int rays = objs.mat->roughness*10+1;
 
 		//	globalilumnation <<<1, rays>>> (objs,reflect_ray);
 		//	cudaDeviceSynchronize();
-		}
+	//	}
 	
 		//calc light value
 		for (int i = 0; i < light_size; i++)
