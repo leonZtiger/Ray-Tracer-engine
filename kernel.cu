@@ -178,6 +178,7 @@ matrix rotateZ(float deg) {
 	return mat;
 }
 
+
 struct triangle {
 
 	vec3d points[3];
@@ -284,6 +285,19 @@ public:
 
 		return camToWorld;
 	}
+	__device__
+	vec3d rotateDir(vec3d &vec) {
+		float yawRad = yaw * (3.1415 / 180);
+		float pitchRad = pitch * (3.1415 / 180);
+
+		float y = vec.y * cosf(pitchRad) - vec.z * sinf(pitchRad);
+		float z = vec.y * sinf(pitchRad) + vec.z * cosf(pitchRad);
+		float x = vec.x * cosf(yawRad) + z * sinf(yawRad);
+		z = -vec.x * sinf(yawRad) + z * cosf(yawRad);
+
+		return { x,y,z };
+	}
+
 
 	vec3d w,u,v ;
 	float viewPlaneW;
@@ -291,6 +305,7 @@ public:
 	float viewPlaneH;
 	float viewPlaneB;
 	float lens;
+	float yaw, pitch;
 	vec3d lower_left;
 	vec3d horizontal;
 	vec3d vertical;
@@ -1061,25 +1076,25 @@ void rayTrace(unsigned int* pixels, int width, int height, float aspect, object&
 		return;
 
 
-	//	float dx = aspect * (2 * (x + 0.5) / (float)width) - 1 ;
-	//	float dy = aspect * (2 * (y + 0.5) / (float)height)*((float)height/width) - 1;
-	float dx = float(x) / float(width) - 0.5;//aspect * (( (width/ 2)-x) / (float)(width/2));
-	float dy = float(y) / float(height) - 0.5;  //((float)height/width)*aspect *  ((height/2)-y) / ((float)height/2);
-
-
+		float dx = aspect * (2 * (x + 0.5) / (float)width) - 1 ;
+		float dy = aspect * (2 * (y + 0.5) / (float)height)*((float)height/width) - 1;
+	//float dx = float(x) / float(width) - 0.5;//aspect * (( (width/ 2)-x) / (float)(width/2));
+	//float dy = float(y) / float(height) - 0.5;  //((float)height/width)*aspect *  ((height/2)-y) / ((float)height/2);
 	float nu, nv, n_t;
 
-	//vec3d dir = normalise(multiply(cam_mat,vec3d({ dx,dy,-1 })));
+//	vec3d dir = normalise(vec3d({ dx,dy,-1 }));
 	// dir = normalise(add(cam.add(cam.f,multiply(cam.viewPlaneW, dx), multiply(cam.v, dy)), cam.w));
-	vec3d disk = cam.Rand_disk();
-	vec3d offset = add(multiply(cam.u, disk.x), multiply(cam.v, disk.y));
+//	vec3d disk = cam.Rand_disk();
+//	vec3d offset = add(multiply(cam.u, disk.x), multiply(cam.v, disk.y));
 
-	vec3d dir = normalise(sub(sub(add(cam.lower_left, add(multiply(cam.horizontal, dx), multiply(cam.vertical, dy))), cam.Org), offset));
-	dir = multiply(rotation, dir);
-	ray cam_ray(add(cam.Org, offset), dir);
-
+//	vec3d dir = normalise(sub(sub(add(cam.lower_left, add(multiply(cam.horizontal, dx), multiply(cam.vertical, dy))), cam.Org), offset));
+	vec3d eyePos({0,0,(-1/aspect)});
+	vec3d dir = vec3d({ dx,dy,0 });
+	ray cam_ray(add(eyePos,cam.Org),cam.rotateDir(normalise(sub(dir,eyePos))));
+    
 	int hit_index;
 	int hit_type;
+
 	//if no ray intersect set the color of the skybox 
 	if (castRay(objs, cam_ray, hit_type, hit_index, n_t, nu, nv)) {
 
@@ -1201,12 +1216,12 @@ void rayTrace(unsigned int* pixels, int width, int height, float aspect, object&
 int light_size = 1;
 int tx =8, ty = 8;
 light* lights;
-camera cam({ 0,0,-10 }, { 0, 0,-1},0.f);
+camera cam({ 0,0,-10 }, { 0, 0,0},0.f);
 
 int lightByteSize = sizeof(float) * 10;
 
 object* objs = new object();
-skybox* Skybox = new skybox("C:\\Users\\Leon\\Downloads\\sky_box.jpg",1000);
+skybox* Skybox = new skybox("C:\\Users\\Leon\\Downloads\\sky_box.jpg",10000);
 float aspect = tan((90 * 0.5 * 3.1415) / 180);
 
 void onStart() {
@@ -1257,21 +1272,21 @@ void checkKey() {
 
 	}
 	if (GetKeyState('E') & 0x8000) {
-		yawY += 0.05f;
+		cam.yaw += 1;
 	//	cam.Dir.x -= 0.05f;
 	
 	}
 
 	if (GetKeyState('Q') & 0x8000) {
-		yawY -= 0.05f;
+		cam.yaw -= 1;
 	//	cam.Dir.x += 0.05f;
 	}
 	if (GetKeyState('Z') & 0x8000) {
-		yawX += 0.05f;
+		cam.pitch += 1;
 	}
 
 	if (GetKeyState('C') & 0x8000) {
-		yawX -= 0.05f;
+		cam.pitch -= 1;
 	}
 	if (GetKeyState(VK_SHIFT) & 0x8000) {
 		cam.Org = add(cam.Org, pointUp);
@@ -1281,8 +1296,7 @@ void checkKey() {
 	}
 //	matrix rot_mat = multiply(rotateY(yawY), rotateX(yawX));	
 //	cam.Dir = multiply(rot_mat, cam.Dir);
-	cam.lookAt();
-	
+//	cam.lookAt();
 }
 
 
@@ -1302,7 +1316,7 @@ void update() {
 
 	//cam.viewPlaneB = 
 	matrix toW = multiply(rotateY(yawY), rotateX(yawX));
-	//cam.Dir = multiply(rot_mat, cam.Dir);
+	//cam.Dir = normalise( multiply(toW, cam.Dir));
 
 	checkCudaErrors(cudaMallocManaged((void**)&pixels, pixelSize));
 	checkCudaErrors(cudaMalloc((void**)&d_lights, lightByteSize));
