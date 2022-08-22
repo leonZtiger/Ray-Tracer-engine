@@ -211,6 +211,7 @@ public:
 	vec3d Dir;
 };
 class camera : public ray {
+
 public:
 	camera(vec3d pos, vec3d dir,float apature) {
 		
@@ -254,39 +255,8 @@ public:
 			return p;
 		}
 	}
-
-	matrix lookAt(vec3d &from, vec3d &to) {
-		vec3d temp = { 0,1,0 };
-
-		vec3d viewDir = sub(to, from);
-		u = normalise(multiply(viewDir, temp));
-		v = normalise( multiply(u, viewDir));
-
-
-		vec3d forward = normalise(sub(to, from));
-		vec3d right = cross(normalise(temp),forward);
-		vec3d up = cross(forward,right);
-		
-		matrix camToWorld;
-
-		camToWorld.mat[0][0] = right.x;
-		camToWorld.mat[0][1] = right.y;
-		camToWorld.mat[0][2] = right.z;
-		camToWorld.mat[1][0] = up.x;
-		camToWorld.mat[1][1] = up.y;
-		camToWorld.mat[1][2] = up.z;
-		camToWorld.mat[2][0] = forward.x;
-		camToWorld.mat[2][1] = forward.y;
-		camToWorld.mat[2][2] = forward.z;
-
-		camToWorld.mat[3][0] = from.x;
-		camToWorld.mat[3][1] = from.y;
-		camToWorld.mat[3][2] = from.z;
-
-		return camToWorld;
-	}
 	__device__
-	vec3d rotateDir(vec3d &vec) {
+	vec3d rotateDir(vec3d &vec,float yaw,float pitch) {
 		float yawRad = yaw * (3.1415 / 180);
 		float pitchRad = pitch * (3.1415 / 180);
 
@@ -297,15 +267,13 @@ public:
 
 		return { x,y,z };
 	}
-
-
 	vec3d w,u,v ;
 	float viewPlaneW;
 	float aspect;
 	float viewPlaneH;
 	float viewPlaneB;
 	float lens;
-	float yaw, pitch;
+	float Camyaw, Campitch;
 	vec3d lower_left;
 	vec3d horizontal;
 	vec3d vertical;
@@ -809,10 +777,10 @@ public:
 		mesh1 = new mesh(file);
 		mesh1->allocMem();
 		s1 = new sphere[sphere_count];
-		planes = new plane({ 0,-50,0 }, { 0,1, 0 });
+		planes = new plane({ 0,-5,0 }, { 0,1, 0 });
 
 		for (int i = 0; i < sphere_count; i++) {
-			s1[i] = sphere({ (float)(rand() % 100) / 10 ,0 ,(float)(rand() % 100) / 10 }, (float)(rand() % 100) / 100);
+			s1[i] = sphere({ (float)(rand() % 100) / 5 ,(float)(rand() % 100) / 5,(float)(rand() % 100) / 5 }, (float)(rand() % 100) / 100);
 		}
 
 
@@ -836,7 +804,7 @@ public:
 		return sizeof(float) * 8 * sphere_count;
 	}
 
-	int sphere_count = 5, plane_count = 1;
+	int sphere_count = 100, plane_count = 0;
 	int depth = 3;
 	sphere* s1;
 	sphere* d_spheres;
@@ -870,42 +838,6 @@ vec3d reflect(vec3d &I, vec3d &N) {
 }
 __global__
 void setup_world() {
-
-}
-__device__
-bool lightIntersect(ray& ray, triangle& tri) {
-
-	vec3d edge1 = sub(tri.points[1], tri.points[0]);
-	vec3d edge2 = sub(tri.points[2], tri.points[0]);
-	vec3d h, s, q;
-	float a, f,u,v;
-
-	h = cross(ray.Dir, edge2);
-	a = dotproduct(edge1, h);
-
-	if (a > -0.0000001f && a < 0.0000001)
-		return false;
-
-	f = 1.f / a;
-
-	s = sub(ray.Org, tri.points[0]);
-	u = f * dotproduct(s, h);
-
-	if (u < 0.f || u> 1.f)
-		return false;
-
-	q = cross(s, edge1);
-	v = f * dotproduct(ray.Dir, q);
-	if (v < 0.f || u + v>1.f)
-		return false;
-
-	float t = f * dotproduct(edge2, q);
-	if (t > 0.0000001) {
-		return true;
-	}
-	else {
-		return false;
-	}
 
 }
 __device__ 
@@ -1044,6 +976,58 @@ bool castRay(object &objs,ray &cam_ray,int &hit_type,int &hit_index,float &nt,fl
 	
 	return false;
 }
+__device__
+float castLightRay(object& objs, ray& cam_ray,light &l) {
+
+	float b = 0;
+	bool shadow = false;
+	for (int j = 0; j < 5; j++){
+		vec3d P = add(add(normalise(cross(cam_ray.Org, cam_ray.Dir)), l.pos),l.size);//l.pos+l.size*v
+		vec3d new_dir = normalise(multiply(sub(cam_ray.Org, P), -1));
+		ray light_ray(cam_ray.Org, new_dir);
+	
+	//check for triangle intersection
+	for (int i = 0; i < objs.mesh1->poly_count; i++)
+	{
+		float t, u, v;
+
+		if (rayIntersect(light_ray, objs.mesh1->d_tri_arr[i], t, u, v))
+		{
+			shadow = true;
+			break;
+	//		return true;
+		}
+	}
+	//checkfor sphere intersection
+	for (int i = 0; i < objs.sphere_count; i++)
+	{
+		float t;
+		if (objs.d_spheres[i].intersect(light_ray, t))
+		{
+			shadow = true;
+			break;
+	//		return true;
+		}
+	}
+
+	//check for plane intersection
+	for (int i = 0; i < objs.plane_count; i++)
+	{
+		float t;
+
+		if (objs.d_planes[i].intersect(light_ray, t))
+		{
+			shadow = true;
+			break;
+		//	return true;
+		}
+	 }
+	if (shadow)
+		break;
+	b += 0.2;
+	}
+ return b;
+}
 __global__
 void globalilumnation(object objs, ray reflect_ray) {
 	
@@ -1125,7 +1109,7 @@ void rayTrace(unsigned int* pixels, int width, int height, float aspect, object&
 
 	vec3d eyePos({0,0,(-1/aspect)});
 	vec3d dir = vec3d({ dx,dy,0 });
-	ray cam_ray(add(eyePos,cam.Org),cam.rotateDir(normalise(sub(dir,eyePos))));
+	ray cam_ray(add(eyePos,cam.Org),cam.rotateDir(normalise(sub(dir,eyePos)),cam.Camyaw,cam.Campitch));
     
 	int hit_index;
 	int hit_type;
@@ -1140,6 +1124,8 @@ void rayTrace(unsigned int* pixels, int width, int height, float aspect, object&
 		int maxY = objs.texture->height;
 
 		vec3d reflect_dir = reflect(cam_ray.Dir, normal);
+		vec3d start_O = new_org;
+		vec3d obj_normal = normal;
 
 		ray reflect_ray(new_org, reflect_dir);
 		bool hit = false;
@@ -1148,60 +1134,64 @@ void rayTrace(unsigned int* pixels, int width, int height, float aspect, object&
 
 		float dr = 1, dg = 1, db = 1;
 		float r = objs.texture->rBuff->data[c_index], g = objs.texture->gBuff->data[c_index], b = objs.texture->bBuff->data[c_index];
+		
+	/*	for (int i = 0; i < 3; i++) {
+		    //calculate the global ilumination the object recives
+	    	// im jusing a routhness value to ditermen how many rays should be cast
+		for(int s = 0; s < 3; s++){
+			ray start_ray(new_org,normalise(cam.rotateDir(reflect_ray.Dir, (float)i, (float)i)));
 
-		//calculate the global ilumination the object recives
-		// im jusing a routhness value to ditermen how many rays should be cast
-		for (int depth = 0; depth < 4; depth++) {
-		//	int rays = objs.mat->roughness*10+1;
-        //	globalilumnation <<<1, rays>>> (objs,reflect_ray);
-		//	cudaDeviceSynchronize();
+			for (int depth = 0; depth < 1; depth++) {
+				//	int rays = objs.mat->roughness*10+1;
+				//	globalilumnation <<<1, rays>>> (objs,reflect_ray);
+				//	cudaDeviceSynchronize();
+				vec3d newOrg, r_normal;
 
-			if (castRay(objs, reflect_ray, hit_type, hit_index, n_t, nu, nv,new_org, normal, tx, ty)) {
-				c_index = (int)(ty * maxY) * maxX + (int)(tx * maxX);
-				r *= objs.texture->rBuff->data[c_index], g *= objs.texture->gBuff->data[c_index], b *= objs.texture->bBuff->data[c_index];
-				
-				reflect_ray.Dir = reflect(reflect_ray.Dir,normal);
-				reflect_ray.Org = new_org;
-			}
-			else {
-			    sky.getFColor(reflect_ray,r,g,b);
-				break;
+				if (castRay(objs, start_ray, hit_type, hit_index, n_t, nu, nv, newOrg, r_normal, tx, ty)) {
+					c_index = (int)(ty * maxY) * maxX + (int)(tx * maxX);
+					r += objs.texture->rBuff->data[c_index], g += objs.texture->gBuff->data[c_index], b += objs.texture->bBuff->data[c_index];
+
+					start_ray.Dir = reflect(start_ray.Dir, r_normal);
+					start_ray.Org = newOrg;
+				}
+				else {
+					float tr = 1, tg = 1, tb = 1;
+					sky.getFColor(start_ray, tr, tg, tb);
+					r += tr;
+					g += tg;
+					b += tb;
+					break;
+				}
 			}
 		}
-	
+	}
+		    r = (float)r / 10.f;
+			g = (float)g / 10.f;
+			b = (float)b / 10.f;*/
 		//calc light value
 		for (int i = 0; i < light_size; i++)
 		{
 
-			vec3d new_dir = normalise(multiply(sub(new_org, lights[i].pos), -1));
-
-			ray light_ray({ new_org,new_dir });
-
+			vec3d new_dir = normalise(multiply(sub(start_O, lights[i].pos), -1));
+			ray light_ray({ start_O,new_dir });
 			bool shadow = false;
 
-			for (int i = 0; i < objs.mesh1->poly_count; i++)
-			{
+	//		if (!castLightRay(objs, light_ray,lights[i])) {
+				float angle = dotproduct(obj_normal, light_ray.Dir);
+				float brightness = 0.0 > angle ? 0.0 : angle * castLightRay(objs, light_ray, lights[i]);
 
-				if (lightIntersect(light_ray, objs.mesh1->d_tri_arr[i]))
-				{
-					shadow = true;
-					break;
-				}
-			}
-			if (!shadow) {
-				float angle = dotproduct(normal, light_ray.Dir);
-				float brightness = 0.f < angle ? angle : 0.1f;
-
-				dr *= 0.8 * brightness * r;// * lights[i].r*r;
-				dg *= 0.8 * brightness * g;//* lights[i].g*g;
-				db *= 0.8 * brightness * b; ////* b * lights[i].b*b;
-			}
-			else {
-				dr *= 0.5 * r;
-				dg *= 0.5 * g;
-				db *= 0.5 * b;
-			}
+				dr *= brightness * r+0.1;// * lights[i].r*r;
+				dg *= brightness * g+0.1;//* lights[i].g*g;
+				db *= brightness * b+0.1; ////* b * lights[i].b*b;
+	//		}
+	//		else {
+	//			dr *= 0.1 * r;
+	//			dg *= 0.1 * g;
+	//			db *= 0.1 * b;
+	//		}
 		}
+
+		
 
 		pixels[y * width + x] = rgbToInt(dr * 255, dg * 255, db * 255);
 
@@ -1230,7 +1220,7 @@ void onStart() {
 
 	objs->loadMesh("C:\\Users\\Leon\\Downloads\\.obj", "C:\\Users\\Leon\\Downloads\\marble.png", material(0,0,0));
 
-	light m_light({ 10,30,-10 }, 1, 1, 1, 1);
+	light m_light({ 10,30,-10 }, 2, 1, 1, 1);
 	light b_light({ 10,30,-10 }, 1, 0, 0.5, 0.5);
 	lights = new light[1] {m_light};
 
@@ -1238,7 +1228,7 @@ void onStart() {
 
 void checkKey() {
 
-	vec3d point = multiply(vec3d({0,0,-1 }), 0.1);
+	vec3d point = multiply(vec3d({cam.Dir.x,0,cam.Dir.z }), 01);
 	vec3d pointside = multiply(vec3d({ 1,0,0 }), 0.1);
 	vec3d pointUp = multiply(vec3d({ 0,1,0 }), 0.1);
 
@@ -1261,17 +1251,17 @@ void checkKey() {
 
 	}
 	if (GetKeyState('E') & 0x8000) {
-		cam.yaw += 1;
+		cam.Camyaw += 1;
 	}
 	if (GetKeyState('Q') & 0x8000) {
-		cam.yaw -= 1;
+		cam.Camyaw -= 1;
 	}
 	if (GetKeyState('Z') & 0x8000) {
-		cam.pitch += 1;
+		cam.Campitch += 1;
 	}
 
 	if (GetKeyState('C') & 0x8000) {
-		cam.pitch -= 1;
+		cam.Campitch -= 1;
 	}
 	if (GetKeyState(VK_SHIFT) & 0x8000) {
 		cam.Org = add(cam.Org, pointUp);
@@ -1306,8 +1296,16 @@ void update() {
 	checkCudaErrors(cudaGetLastError());
 	checkCudaErrors(cudaDeviceSynchronize());
 
-   setPixelBuff(pixels);
+    setPixelBuff(pixels);
 	checkCudaErrors(cudaFree(pixels));
 	checkCudaErrors(cudaFree(d_lights));
 	
 }
+/*
+int main() {
+	onStart();
+	while (true) {
+update();
+}
+	
+}*/
