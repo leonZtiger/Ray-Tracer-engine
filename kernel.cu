@@ -141,6 +141,7 @@ matrix pointAt(vec3d pos, vec3d target, vec3d up) {
 	return mat;
 
 }
+__device__
 matrix rotateY(float deg) {
 	matrix mat;
 
@@ -153,6 +154,7 @@ matrix rotateY(float deg) {
 
 	return mat;
 }
+__device__
 matrix rotateX(float deg) {
 	matrix mat;
 
@@ -165,6 +167,7 @@ matrix rotateX(float deg) {
 
 	return mat;
 }
+__device__
 matrix rotateZ(float deg) {
 	matrix mat;
 
@@ -464,8 +467,9 @@ public:
 
 				ss >> in[0] >> in[1] >> in[2] >> in[3];
 		//		cout << in[0]<<"  " << in[1] << "  " << in[2] << "\n";
-                if (vn.size() != 0 && vt.size() > 1) {
-				if (SlashCount(line) >= 8) {
+                if (vn.size() != 0 && vt.size() != 0) {
+				
+					if (SlashCount(line) <= 6) {
                
 					
 					int f[3];  
@@ -505,7 +509,7 @@ public:
 					normal = normalise(normal);
 
 					tris.push_back({ p[f[0] - 1],p[f[1] - 1] ,p[f[2] - 1] , normal,vn[pvn[0] - 1],vn[pvn[1] - 1],vn[pvn[2] - 1] ,vt[pvt[0] - 1],vt[pvt[1] - 1] ,vt[pvt[2] - 1] });
-					tris.push_back({ p[f[0] - 1],p[f[2] - 1] ,p[f[3] - 1] , normal,vn[pvn[0] - 1],vn[pvn[2] - 1],vn[pvn[3] - 1] ,vt[pvt[0] - 1],vt[pvt[2] - 1] ,vt[pvt[3] - 1] });
+					tris.push_back({ p[f[0] - 1],p[f[2] - 1] ,p[f[3] - 1] , normal,vn[pvn[0] - 1],vn[pvn[2] - 1],vn[pvn[3] - 1] ,vt[pvt[0] - 1],vt[pvt[2] - 1] ,vt[pvt[2] - 1] });
 
 					
 
@@ -625,33 +629,7 @@ public:
 	__device__ __host__
 	int getBytes() {
 		return ((sizeof(float) * 3*7)+(sizeof(float)*2*3)) * poly_count;
-	}
-	
-	/*__device__
-	bool intersect(ray& ray, int &color, float &n_t, vec3d &normal) {
-		
-		 float u, v,t;
-		 float n_u, n_v;
-		 
-		 for (size_t i = 0; i < poly_count; i++)
-		 {
-			 if (triangleIntersect(ray, triangles[i], t, u, v)) {
-				 if (t < n_t) {
-					 n_u = u;
-					 n_v = v;
-					 n_t = t;
-					 normal = triangles[i].normal;
-				}
-			}
-		 }
-		 if (n_t != INFINITY) {
-		 color = rgbToInt(n_u*255,n_v*255,(1-n_u-n_v)*255);
-		 return true;
-		 }
-		 return false;
-	 }*/
-	
-	
+	}	
 
 private:
 	
@@ -804,7 +782,7 @@ public:
 		return sizeof(float) * 8 * sphere_count;
 	}
 
-	int sphere_count = 100, plane_count = 0;
+	int sphere_count = 200, plane_count = 0;
 	int depth = 3;
 	sphere* s1;
 	sphere* d_spheres;
@@ -831,6 +809,25 @@ public :
 	vec3d pos;
 	float size,r,g,b;
 };
+__device__
+matrix rotate(float angle, vec3d vec) {
+
+	matrix rot;
+
+	rot.mat[0][0] = cosf(angle) + vec.x * vec.x;
+	rot.mat[0][1] = vec.x * vec.y*(1.f-cosf(angle))-vec.z*sinf(angle);
+	rot.mat[0][2] = vec.x * vec.z * (1.f - cosf(angle)) - vec.y * sinf(angle);
+
+	rot.mat[1][0] = vec.y * vec.y * (1.f - cosf(angle)) + vec.z * sinf(angle);
+	rot.mat[1][1] = cosf(angle)+ vec.y*vec.y * (1.f - cos(angle));
+	rot.mat[1][2] = vec.y * vec.z * (1.f - cosf(angle)) - vec.x * sinf(angle);
+
+	rot.mat[2][0] = vec.z * vec.x * (1.f - cosf(angle)) - vec.y * sinf(angle);
+	rot.mat[2][1] = vec.x * vec.y *(1.f -cosf(angle)) + vec.x*sinf(angle);
+	rot.mat[2][2] = cosf(angle) + vec.z*vec.z*(1.f -cosf(angle));
+
+	return rot;
+}
 
 __device__
 vec3d reflect(vec3d &I, vec3d &N) {
@@ -977,20 +974,51 @@ bool castRay(object &objs,ray &cam_ray,int &hit_type,int &hit_index,float &nt,fl
 	return false;
 }
 __device__
-float castLightRay(object& objs, ray& cam_ray,light &l) {
+float castLightRay(object& objs, vec3d& start,light &l,vec3d &normal) {
 
 	float b = 0;
 	bool shadow = false;
-	for (int j = 0; j < 5; j++){
-		vec3d P = add(add(normalise(cross(cam_ray.Org, cam_ray.Dir)), l.pos),l.size);//l.pos+l.size*v
-		vec3d new_dir = normalise(multiply(sub(cam_ray.Org, P), -1));
-		ray light_ray(cam_ray.Org, new_dir);
+
+	vec3d toL = normalise(sub( l.pos,start));
 	
-	//check for triangle intersection
+	
+	for (int j = 0; j < 20; j++) {
+	    curandState s;	
+		curand_init(j*j, 0, 0, &s);
+
+	 
+//		vec3d toL = normalise(sub(l.pos, start));
+		vec3d P = cross(toL, vec3d({ 0,1,0 }));
+		
+		if (P.x == 0 && P.y == 0 && P.z == 0) {
+			P.x = 1;
+		}
+
+		vec3d toEdge = normalise(sub(add(l.pos,multiply(P,l.size)),start));
+		float angle = cosf((dotproduct(toL, toEdge)) * 2);
+	
+		float _z =  curand_uniform_double(&s)* (1.0f - angle) + angle;
+		float phi = curand_uniform_double(&s)* 2.f * 3.1415f;
+
+		float x = sqrtf(1.f - _z * _z) * cosf(phi);
+		float y = sqrtf(1.f - _z * _z) * sinf(phi);
+
+		vec3d axis = normalise(cross(vec3d({ 0, 0, 1 }), normalise(toL)));
+		float nAngle = acosf(dotproduct(normalise(toL), vec3d({ 0,0,1 })));
+
+		
+
+		// = normalise(multiply(sub(cam_ray.Org, P), -1));
+		vec3d new_dir = normalise(sub(l.pos, multiply(rotate(nAngle, axis), vec3d({x,y,_z}))));
+		ray light_ray({ start,new_dir });
+	   
+		shadow = false;
+
+		//check for triangle intersection
 	for (int i = 0; i < objs.mesh1->poly_count; i++)
 	{
 		float t, u, v;
-
+		
 		if (rayIntersect(light_ray, objs.mesh1->d_tri_arr[i], t, u, v))
 		{
 			shadow = true;
@@ -998,6 +1026,7 @@ float castLightRay(object& objs, ray& cam_ray,light &l) {
 	//		return true;
 		}
 	}
+	if(!shadow)
 	//checkfor sphere intersection
 	for (int i = 0; i < objs.sphere_count; i++)
 	{
@@ -1009,7 +1038,7 @@ float castLightRay(object& objs, ray& cam_ray,light &l) {
 	//		return true;
 		}
 	}
-
+	if (!shadow)
 	//check for plane intersection
 	for (int i = 0; i < objs.plane_count; i++)
 	{
@@ -1022,12 +1051,17 @@ float castLightRay(object& objs, ray& cam_ray,light &l) {
 		//	return true;
 		}
 	 }
-	if (shadow)
-		break;
-	b += 0.2;
+//	if (shadow)
+//		break;
+	if (!shadow) {
+	    	b += 0.05;
+       }
 	}
- return b;
+	float a = dotproduct(normal, toL);
+	b *= a > 0 ? a : 0;
+	return b;
 }
+
 __global__
 void globalilumnation(object objs, ray reflect_ray) {
 	
@@ -1124,7 +1158,7 @@ void rayTrace(unsigned int* pixels, int width, int height, float aspect, object&
 		int maxY = objs.texture->height;
 
 		vec3d reflect_dir = reflect(cam_ray.Dir, normal);
-		vec3d start_O = new_org;
+		vec3d start_O = add(multiply(normal,0.001),new_org);
 		vec3d obj_normal = normal;
 
 		ray reflect_ray(new_org, reflect_dir);
@@ -1169,20 +1203,17 @@ void rayTrace(unsigned int* pixels, int width, int height, float aspect, object&
 			g = (float)g / 10.f;
 			b = (float)b / 10.f;*/
 		//calc light value
-		for (int i = 0; i < light_size; i++)
+	    for (int i = 0; i < light_size; i++)
 		{
-
-			vec3d new_dir = normalise(multiply(sub(start_O, lights[i].pos), -1));
-			ray light_ray({ start_O,new_dir });
 			bool shadow = false;
 
 	//		if (!castLightRay(objs, light_ray,lights[i])) {
-				float angle = dotproduct(obj_normal, light_ray.Dir);
-				float brightness = 0.0 > angle ? 0.0 : angle * castLightRay(objs, light_ray, lights[i]);
-
-				dr *= brightness * r+0.1;// * lights[i].r*r;
-				dg *= brightness * g+0.1;//* lights[i].g*g;
-				db *= brightness * b+0.1; ////* b * lights[i].b*b;
+		//		float angle = dotproduct(obj_normal, light_ray.Dir);
+				float brightness =  castLightRay(objs, start_O, lights[i],obj_normal);
+			//	brightness *= dotproduct(start_O, );
+				dr += brightness * r * lights[i].r;
+				dg += brightness * g* lights[i].g;
+				db += brightness * b * lights[i].b;
 	//		}
 	//		else {
 	//			dr *= 0.1 * r;
@@ -1191,9 +1222,10 @@ void rayTrace(unsigned int* pixels, int width, int height, float aspect, object&
 	//		}
 		}
 
+
 		
 
-		pixels[y * width + x] = rgbToInt(dr * 255, dg * 255, db * 255);
+		pixels[y * width + x] = rgbToInt(dr/3 * 255, dg/3 * 255, db/3 * 255);
 
 		return;
    }
@@ -1204,12 +1236,12 @@ void rayTrace(unsigned int* pixels, int width, int height, float aspect, object&
 	return;
 }
 
-int light_size = 1;
+int light_size = 3;
 int tx =8, ty = 8;
 light* lights;
-camera cam({ 0,0,-10 }, { 0, 0,0},0.f);
+camera cam({ 0,0,0 }, { 0, 0,0},0.f);
 
-int lightByteSize = sizeof(float) * 10;
+int lightByteSize = sizeof(float) * 21;
 
 object* objs = new object();
 skybox* Skybox = new skybox("C:\\Users\\Leon\\Downloads\\sky_box.jpg",10000);
@@ -1220,9 +1252,10 @@ void onStart() {
 
 	objs->loadMesh("C:\\Users\\Leon\\Downloads\\.obj", "C:\\Users\\Leon\\Downloads\\marble.png", material(0,0,0));
 
-	light m_light({ 10,30,-10 }, 2, 1, 1, 1);
-	light b_light({ 10,30,-10 }, 1, 0, 0.5, 0.5);
-	lights = new light[1] {m_light};
+	light m_light({ 0,-100,0 }, 5, 1, 0, 0);
+	light b_light({ 10,-50,-10 }, 1, 0, 1, 0);
+	light c_light({ -10,-50,10 }, 1, 0, 0, 1);
+	lights = new light[3] {m_light,b_light,c_light};
 
 }
 
