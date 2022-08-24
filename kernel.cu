@@ -782,7 +782,7 @@ public:
 		return sizeof(float) * 8 * sphere_count;
 	}
 
-	int sphere_count = 200, plane_count = 0;
+	int sphere_count = 0, plane_count = 0;
 	int depth = 3;
 	sphere* s1;
 	sphere* d_spheres;
@@ -980,12 +980,12 @@ float castLightRay(object& objs, vec3d& start,light &l,vec3d &normal) {
 	bool shadow = false;
 
 	vec3d toL = normalise(sub( l.pos,start));
-	
+	//curandState s;	
+	//curand_init(start.x*start.y+start.z*start.z, 0, 0, &s);
+
 	
 	for (int j = 0; j < 20; j++) {
-	    curandState s;	
-		curand_init(j*j, 0, 0, &s);
-
+	    
 	 
 //		vec3d toL = normalise(sub(l.pos, start));
 		vec3d P = cross(toL, vec3d({ 0,1,0 }));
@@ -997,8 +997,8 @@ float castLightRay(object& objs, vec3d& start,light &l,vec3d &normal) {
 		vec3d toEdge = normalise(sub(add(l.pos,multiply(P,l.size)),start));
 		float angle = cosf((dotproduct(toL, toEdge)) * 2);
 	
-		float _z =  curand_uniform_double(&s)* (1.0f - angle) + angle;
-		float phi = curand_uniform_double(&s)* 2.f * 3.1415f;
+		float _z =  (float)j/20* (1.0f - angle) + angle;
+		float phi = (float)j/20 * 2.f * 3.1415f;
 
 		float x = sqrtf(1.f - _z * _z) * cosf(phi);
 		float y = sqrtf(1.f - _z * _z) * sinf(phi);
@@ -1158,7 +1158,7 @@ void rayTrace(unsigned int* pixels, int width, int height, float aspect, object&
 		int maxY = objs.texture->height;
 
 		vec3d reflect_dir = reflect(cam_ray.Dir, normal);
-		vec3d start_O = add(multiply(normal,0.001),new_org);
+		vec3d start_O = add(multiply(normal,0.00001),new_org);
 		vec3d obj_normal = normal;
 
 		ray reflect_ray(new_org, reflect_dir);
@@ -1166,8 +1166,7 @@ void rayTrace(unsigned int* pixels, int width, int height, float aspect, object&
 
 		int c_index = (int)(ty * maxY) * maxX + (int)(tx * maxX);
 
-		float dr = 1, dg = 1, db = 1;
-		float r = objs.texture->rBuff->data[c_index], g = objs.texture->gBuff->data[c_index], b = objs.texture->bBuff->data[c_index];
+		float r = objs.texture->rBuff->data[c_index] * 254, g = objs.texture->gBuff->data[c_index] * 254, b = objs.texture->bBuff->data[c_index] * 254;
 		
 	/*	for (int i = 0; i < 3; i++) {
 		    //calculate the global ilumination the object recives
@@ -1202,6 +1201,7 @@ void rayTrace(unsigned int* pixels, int width, int height, float aspect, object&
 		    r = (float)r / 10.f;
 			g = (float)g / 10.f;
 			b = (float)b / 10.f;*/
+
 		//calc light value
 	    for (int i = 0; i < light_size; i++)
 		{
@@ -1211,9 +1211,9 @@ void rayTrace(unsigned int* pixels, int width, int height, float aspect, object&
 		//		float angle = dotproduct(obj_normal, light_ray.Dir);
 				float brightness =  castLightRay(objs, start_O, lights[i],obj_normal);
 			//	brightness *= dotproduct(start_O, );
-				dr += brightness * r * lights[i].r;
-				dg += brightness * g* lights[i].g;
-				db += brightness * b * lights[i].b;
+				r += brightness * lights[i].r;
+				g += brightness * lights[i].g;
+				b += brightness * lights[i].b;
 	//		}
 	//		else {
 	//			dr *= 0.1 * r;
@@ -1225,14 +1225,14 @@ void rayTrace(unsigned int* pixels, int width, int height, float aspect, object&
 
 		
 
-		pixels[y * width + x] = rgbToInt(dr/3 * 255, dg/3 * 255, db/3 * 255);
+		pixels[y * width + x] = rgbToInt(r, g, b );
 
 		return;
    }
 	   float r, g, b;
 	   sky.getFColor(cam_ray, r, g, b);
 
-	pixels[y * width + x] = rgbToInt(r*255,g*255,b*255);
+	pixels[y * width + x] = rgbToInt(r*254,g*254,b*254);
 	return;
 }
 
@@ -1244,17 +1244,17 @@ camera cam({ 0,0,0 }, { 0, 0,0},0.f);
 int lightByteSize = sizeof(float) * 21;
 
 object* objs = new object();
-skybox* Skybox = new skybox("C:\\Users\\Leon\\Downloads\\sky_box.jpg",10000);
+skybox* Skybox = new skybox("C:\\Users\\Leon\\Downloads\\sky_box.jpg",100);
 float aspect = tan((90 * 0.5 * 3.1415) / 180);
 float yawY = 0,yawX = 0;
 
 void onStart() {
 
-	objs->loadMesh("C:\\Users\\Leon\\Downloads\\.obj", "C:\\Users\\Leon\\Downloads\\marble.png", material(0,0,0));
+	objs->loadMesh("C:\\Users\\Leon\\Downloads\\sphere.obj", "C:\\Users\\Leon\\Downloads\\marble.png", material(0,0,0));
 
-	light m_light({ 0,-100,0 }, 5, 1, 0, 0);
-	light b_light({ 10,-50,-10 }, 1, 0, 1, 0);
-	light c_light({ -10,-50,10 }, 1, 0, 0, 1);
+	light m_light({ 0,-100,0 }, 5, 1, 1, 1);
+	light b_light({ 10,-50,-10 }, 1, 1, 1, 1);
+	light c_light({ -10,-50,10 }, 1, 1, 1, 1);
 	lights = new light[3] {m_light,b_light,c_light};
 
 }
