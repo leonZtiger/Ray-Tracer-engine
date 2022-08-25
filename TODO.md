@@ -4,9 +4,12 @@
 - [ ] soft edges 
 - [ ] Framebuffer
 - [ ] create CMake and general code clean up and better project structure
+- [ ] more complex camera movement (accelaration and roll)
 - [ ] refractions
 - [ ] reflections
 - [ ] glossy reflection
+- [ ] global illumination
+- [ ] roughness value
 
 ### INPROGRESS
 - [ ] random ray offset for shadows 
