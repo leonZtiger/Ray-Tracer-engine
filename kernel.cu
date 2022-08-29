@@ -99,9 +99,9 @@ __device__ __host__
 vec3d multiply(matrix mat, vec3d v1) {
 
 	vec3d v2;
-	v2.x = v1.x * mat.mat[0][0] + v1.y * mat.mat[0][1] + v1.z * mat.mat[0][2];
-	v2.y = v1.x * mat.mat[1][0] + v1.y * mat.mat[1][1] + v1.z * mat.mat[1][2];
-	v2.z = v1.x * mat.mat[2][0] + v1.y * mat.mat[2][1] + v1.z * mat.mat[2][2];
+	v2.x = v1.x * mat.mat[0][0] + v1.y * mat.mat[1][0] + v1.z * mat.mat[2][0];
+	v2.y = v1.x * mat.mat[0][1] + v1.y * mat.mat[1][1] + v1.z * mat.mat[2][1];
+	v2.z = v1.x * mat.mat[0][2] + v1.y * mat.mat[1][2] + v1.z * mat.mat[2][2];
 
 	return v2;
 }
@@ -218,46 +218,11 @@ class camera : public ray {
 public:
 	camera(vec3d pos, vec3d dir,float apature) {
 		
-		 w = normalise(sub(pos,dir));
-		 u = normalise(cross(vec3d({ 0,1,0 }),w));
-		 v =  cross(w,u);
-        
-		viewPlaneW = tan(90*3.1415/180);
-		viewPlaneH = viewPlaneW * tan(90*3.1415/180);
-		
-		lower_left = sub(sub(sub(pos,multiply(u,viewPlaneW)),multiply(v,viewPlaneH)),w);
-		horizontal = multiply(multiply(u, viewPlaneW),2);
-		vertical = multiply(multiply(v, viewPlaneH), 2);
-
 		this->Org = pos;
 		this->Dir = dir;
-		this->lens = apature / 2;
+	
 	}
-	void lookAt() {
 
-		w = normalise(sub(Org, Dir));
-		u = normalise(cross(vec3d({ 0,1,0 }),w ));
-		v = cross(w,u);
-
-		viewPlaneW = tan((90 * 3.1415 / 180)/2);
-		viewPlaneH = viewPlaneW * aspect;
-
-		lower_left = sub(sub(sub(Org, multiply(u, viewPlaneW)), multiply(v, viewPlaneH)), w);
-		horizontal = multiply(multiply(u, viewPlaneW), 2);
-		vertical = multiply(multiply(v, viewPlaneH), 2);
-	}
-	__device__
-	vec3d Rand_disk() {
-		
-		curandState s;
-		curand_init(Org.x,0,0,&s);
-
-		vec3d p = sub(multiply(vec3d({(float)curand_uniform_double(&s),(float)curand_uniform_double(&s),0}), 2), vec3d({1,1,0}));
-
-		if (!dotproduct(p, p) >= 1) {
-			return p;
-		}
-	}
 	__device__
 	vec3d rotateDir(vec3d &vec,float yaw,float pitch) {
 		float yawRad = yaw * (3.1415 / 180);
@@ -270,16 +235,9 @@ public:
 
 		return { x,y,z };
 	}
-	vec3d w,u,v ;
-	float viewPlaneW;
+
 	float aspect;
-	float viewPlaneH;
-	float viewPlaneB;
-	float lens;
-	float Camyaw, Campitch;
-	vec3d lower_left;
-	vec3d horizontal;
-	vec3d vertical;
+	float Camyaw = 180, Campitch = -20;
 };
 
 
@@ -326,11 +284,16 @@ public:
 		t0 = tca - thc;
 		t1 = tca + thc;
 
-		t0 = t0 > t1 ? t1 : t0;
+		if (t0 > t1) {
+		float temp = 0;
+		t0 = t1;
+	    t1 = temp;
+		}
+	
+
 
 		if (t0 < 0) {
 			t0 = t1;
-			if (t0 < 0)
 				return false;
 		}
 		t = t0;
@@ -355,17 +318,17 @@ public:
 		bool intersect(ray & cam_ray, float& t) {
 
 		float denom = dotproduct(normal, cam_ray.Dir);
-		if (denom > 0.0001) {
-			vec3d pl0 = sub(cam_ray.Org,orgin);
-			t = dotproduct(pl0, normal);
-			return (t >= 0);
+
+		if (denom < 0) {
+			vec3d pl0 = sub(orgin,cam_ray.Org);
+			t = dotproduct(pl0, normal)/denom;
+			return t >= 0;
 		}
 		return false;
 	}
 
 	bool reflective = false;
 	vec3d normal;
-
 };
 __device__
 bool planeIntersect(ray& cam_ray,plane p, float& t) {
@@ -378,11 +341,78 @@ bool planeIntersect(ray& cam_ray,plane p, float& t) {
 	}
 	return false;
 }
-class cube {
+
+class cube : public shape{
 
 public:
 
+	cube(vec3d c1,vec3d c2) {
+		this->bounds[0] = c1;
+		this->bounds[1] = c2;
+	}
+	cube() {  }
+	__device__
+	bool intersects(ray& cam_ray, float& t) {
+
+		vec3d new_dir;
+
+		new_dir.x = 1.f / cam_ray.Dir.x;
+		new_dir.y = 1.f / cam_ray.Dir.y;
+		new_dir.z = 1.f / cam_ray.Dir.z;
+
+		int sign[3] = {(new_dir.x < 0),(new_dir.y < 0) ,(new_dir.z < 0) };
+
+		float xmin = (bounds[sign[0]].x - cam_ray.Org.x) * new_dir.x;
+		float xmax = (bounds[1-sign[0]].x - cam_ray.Org.x) * new_dir.x;
+		float ymin = (bounds[sign[1]].y - cam_ray.Org.y) * new_dir.y;
+		float ymax = (bounds[1-sign[1]].y - cam_ray.Org.y) * new_dir.y;
+
+		if ((xmin > ymax) || (ymin > xmax))
+			return false;
+
+		if (ymin > xmin)
+			xmin = ymin;
+
+		if (ymax < xmax)
+			xmax = ymax;
+
+		float zmin = (bounds[sign[2]].z - cam_ray.Org.z) * new_dir.z;
+		float zmax = (1-bounds[sign[2]].z - cam_ray.Org.z) * new_dir.z;
+
+		if ((xmin > zmax) || (zmin > xmax))
+			return false;
+
+		if (zmin > xmin)
+			xmin = zmin;
+
+		if (zmax < xmax)
+			xmax = zmax;
+
+		t = 0;
+
+		return true;
+		
+	}
+	vec3d bounds[2];
 };
+
+class Bvhbox {
+public:
+
+	Bvhbox(vec3d c1,vec3d c2, int *in, int len) {
+
+		bvhbox = new cube( c1,c2 );
+		
+        checkCudaErrors(cudaMallocManaged((void**)&d_indexes, sizeof(int)* len));
+		cudaMemcpy(d_indexes, in, sizeof(int) * len,cudaMemcpyHostToDevice);
+	}
+
+	cube *bvhbox;
+	int *indexes;
+	int *d_indexes;
+	int length;
+};
+
 
 __device__ __host__
 unsigned long rgbToInt(int r, int g, int b) {
@@ -405,7 +435,6 @@ public:
 	
 	triangle *d_tri_arr;
 	triangle* h_tri_arr;
-
     int poly_count;
 	bool has_normals = false;
 
@@ -600,36 +629,174 @@ public:
 		 h_tri_arr = new triangle[poly_count];
 
 		for (int i = 0; i < poly_count; i++) {
-			tris[i].points[0].z -= 12;
-			tris[i].points[1].z -= 12;
-			tris[i].points[2].z -= 12;
-
-	/*		tris[i].points[0].x -= 3;
-			tris[i].points[1].x -= 3;
-			tris[i].points[2].x -= 3;*/
-
-			tris[i].points[0].y -= 3;
-			tris[i].points[1].y -= 3;
-			tris[i].points[2].y -= 3;
 
 			h_tri_arr[i] = tris[i];
 		}
+		
 		tris.clear();
 		return;
 	}
     
-	
+
+	Bvhbox* generateBVH(triangle* tris, int length) {
+
+		
+		int height;
+
+		vec3d max = tris[0].points[0];
+		vec3d min = tris[0].points[0];
+
+		for (int i = 0; i < length; i++) {
+
+			for (int x = 0; x < 3; x++) {
+
+				if (tris[i].points[x].x > max.x) {
+					max.x = tris[i].points[x].x;
+				}
+				if (tris[i].points[x].y > max.y) {
+					max.y = tris[i].points[x].y;
+				}
+				if (tris[i].points[x].z > max.z) {
+					max.z = tris[i].points[x].z;
+				}
+
+				if (tris[i].points[x].x < min.x) {
+					min.x = tris[i].points[x].x;
+				}
+				if (tris[i].points[x].y < min.y) {
+					min.y = tris[i].points[x].y;
+				}
+				if (tris[i].points[x].z < min.z) {
+					min.z = tris[i].points[x].z;
+				}
+			}
+		}
+		height = max.y - (max.y - min.y) / 2;
+		vec3d tempMin = max;
+
+		for (int i = 0; i < length; i++) {
+
+			for (int x = 0; x < 3; x++) {
+
+				if (tris[i].points[x].x < tempMin.x && tris[i].points[x].y > height) {
+					tempMin.x = tris[i].points[x].x;
+
+				}
+				if (tris[i].points[x].y < tempMin.y && tris[i].points[x].y > height) {
+					tempMin.y = tris[i].points[x].y;
+
+				}
+				if (tris[i].points[x].y < tempMin.y && tris[i].points[x].y > height) {
+					tempMin.y = tris[i].points[x].y;
+
+				}
+			}
+		}
+
+
+		vec3d tempMax = min;
+
+		for (int i = 0; i < length; i++) {
+
+			for (int x = 0; x < 3; x++) {
+
+				if (tris[i].points[x].x > tempMax.x && tris[i].points[x].y < height) {
+					tempMax.x = tris[i].points[x].x;
+
+				}
+
+				if (tris[i].points[x].y > tempMax.y && tris[i].points[x].y < height) {
+					tempMax.y = tris[i].points[x].y;
+
+				}
+
+				if (tris[i].points[x].z > tempMax.z && tris[i].points[x].y < height) {
+					tempMax.z = tris[i].points[x].z;
+
+				}
+			}
+		}
+
+		std::vector<int> indexs_1, indexs_2;
+
+		for (int j = 0; j < 2; j++) {
+
+			for (int i = 0; i < length; i++) {
+
+				if (tris[i].points[0].y > height) {
+					indexs_1.push_back(i);
+				}
+				if (tris[i].points[0].y < height) {
+					indexs_2.push_back(i);
+				}
+			}
+		}
+
+		int* i1 = new int[indexs_1.size()];
+		int* i2 = new int[indexs_2.size()];
+
+		for (int i = 0; i < indexs_1.size(); i++) {
+			i1 = new int(indexs_1[i]);
+		}
+		for (int i = 0; i < indexs_2.size(); i++) {
+			i2 = new int(indexs_2[i]);
+		}
+		Bvhbox* b = new Bvhbox[2]{
+		Bvhbox(min, tempMax, i1, indexs_2.size()),
+		Bvhbox(tempMin, max, i2, indexs_1.size())
+		};
+
+		return b;
+	}
+
 	
 	void allocMem() {
-		int size = getBytes();
+			int size = getBytes();
 		checkCudaErrors(cudaMallocManaged((void**)&d_tri_arr, size));
 		memcpy(d_tri_arr, h_tri_arr, size);
 	}
 
-	__device__ __host__
+	 __host__
 	int getBytes() {
 		return ((sizeof(float) * 3*7)+(sizeof(float)*2*3)) * poly_count;
 	}	
+
+	 __device__
+	 bool rayIntersect(ray& ray, triangle& tri, float& t, float& u, float& v) {
+
+		 vec3d edge1 = sub(tri.points[1], tri.points[0]);
+		 vec3d edge2 = sub(tri.points[2], tri.points[0]);
+		 vec3d h, s, q;
+		 float a, f;
+
+		 h = cross(ray.Dir, edge2);
+		 a = dotproduct(edge1, h);
+
+		 if (a > -0.0000001f && a < 0.0000001)
+			 return false;
+
+		 f = 1.f / a;
+
+		 s = sub(ray.Org, tri.points[0]);
+		 u = f * dotproduct(s, h);
+
+		 if (u < 0.f || u> 1.f)
+			 return false;
+
+		 q = cross(s, edge1);
+		 v = f * dotproduct(ray.Dir, q);
+		 if (v < 0.f || u + v>1.f)
+			 return false;
+
+		 t = f * dotproduct(edge2, q);
+		 if (t > 0.0000001) {
+			 return true;
+		 }
+		 else {
+			 return false;
+		 }
+
+	 }
 
 private:
 	
@@ -722,12 +889,13 @@ public:
 		float t;
 
 		box->intersect(in_ray, t);
+
 		vec3d hit_point = add(in_ray.Org, multiply(in_ray.Dir, t));
 		vec3d normal = sub(hit_point, box->orgin);
 		normal = normalise(normal);
 
-		int x = (int)((1 + atan2(normal.z, normal.x) / 3.1415) * 0.5 * skyboxTex->width);
-		int y = (int)(acosf(normal.y) / 3.1415 * skyboxTex->height);
+		int x = ((1.f + atan2(normal.z, normal.x) / 3.1415f) * 0.5f * skyboxTex->width);
+		int y = (acosf(normal.y) / 3.1415f * skyboxTex->height);
 
 		int index = y * skyboxTex->width + x;
 
@@ -755,13 +923,11 @@ public:
 		mesh1 = new mesh(file);
 		mesh1->allocMem();
 		s1 = new sphere[sphere_count];
-		planes = new plane({ 0,-5,0 }, { 0,1, 0 });
+		planes = new plane({ 0,0,0 }, normalise(vec3d({ 0,1, 0 })));
 
 		for (int i = 0; i < sphere_count; i++) {
-			s1[i] = sphere({ (float)(rand() % 100) / 5 ,(float)(rand() % 100) / 5,(float)(rand() % 100) / 5 }, (float)(rand() % 100) / 100);
+			s1[i] = sphere({ (float)(rand() % 100) / 10 ,(float)(rand() % 100) / 10,(float)(rand() % 100) / 10 }, (float)(rand() % 100) / 100);
 		}
-
-
 
 		texture = new sprite(tex);
 		this->mat = new material(mat);
@@ -782,7 +948,7 @@ public:
 		return sizeof(float) * 8 * sphere_count;
 	}
 
-	int sphere_count = 0, plane_count = 0;
+	int sphere_count = 100, plane_count = 1;
 	int depth = 3;
 	sphere* s1;
 	sphere* d_spheres;
@@ -791,6 +957,8 @@ public:
 	mesh* mesh1;
 	sprite* texture;
 	material* mat;
+	mesh** tot_mesh;
+	int meshes;
 };
 
 class light {
@@ -809,7 +977,7 @@ public :
 	vec3d pos;
 	float size,r,g,b;
 };
-__device__
+__device__ __host__
 matrix rotate(float angle, vec3d vec) {
 
 	matrix rot;
@@ -818,12 +986,12 @@ matrix rotate(float angle, vec3d vec) {
 	rot.mat[0][1] = vec.x * vec.y*(1.f-cosf(angle))-vec.z*sinf(angle);
 	rot.mat[0][2] = vec.x * vec.z * (1.f - cosf(angle)) - vec.y * sinf(angle);
 
-	rot.mat[1][0] = vec.y * vec.y * (1.f - cosf(angle)) + vec.z * sinf(angle);
+	rot.mat[1][0] = vec.y * vec.x * (1.f - cosf(angle)) + vec.z * sinf(angle);
 	rot.mat[1][1] = cosf(angle)+ vec.y*vec.y * (1.f - cos(angle));
 	rot.mat[1][2] = vec.y * vec.z * (1.f - cosf(angle)) - vec.x * sinf(angle);
 
 	rot.mat[2][0] = vec.z * vec.x * (1.f - cosf(angle)) - vec.y * sinf(angle);
-	rot.mat[2][1] = vec.x * vec.y *(1.f -cosf(angle)) + vec.x*sinf(angle);
+	rot.mat[2][1] = vec.z * vec.y *(1.f -cosf(angle)) + vec.x*sinf(angle);
 	rot.mat[2][2] = cosf(angle) + vec.z*vec.z*(1.f -cosf(angle));
 
 	return rot;
@@ -833,98 +1001,63 @@ __device__
 vec3d reflect(vec3d &I, vec3d &N) {
 	return sub(I,multiply(multiply(N,dotproduct(I,N)),2));
 }
-__global__
-void setup_world() {
 
-}
-__device__ 
-bool rayIntersect(ray& ray, triangle& tri, float& t, float& u, float& v) {
-
-	vec3d edge1 = sub(tri.points[1], tri.points[0]);
-	vec3d edge2 = sub(tri.points[2], tri.points[0]);
-	vec3d h, s, q;
-	float a, f;
-
-	h = cross(ray.Dir, edge2);
-	a = dotproduct(edge1, h);
-
-	if (a > -0.0000001f && a < 0.0000001)
-		return false;
-
-	f = 1.f / a;
-
-	s = sub(ray.Org, tri.points[0]);
-	u = f * dotproduct(s, h);
-
-	if (u < 0.f || u> 1.f)
-		return false;
-
-	q = cross(s, edge1);
-	v = f * dotproduct(ray.Dir, q);
-	if (v < 0.f || u + v>1.f)
-		return false;
-
-	t = f * dotproduct(edge2, q);
-	if (t > 0.0000001) {
-		return true;
-	}
-	else {
-		return false;
-	}
-
-}
 __device__
 bool castRay(object &objs,ray &cam_ray,int &hit_type,int &hit_index,float &nt,float&nu,float &nv,vec3d & new_org,vec3d &normal,float & tx, float &ty) {
 	
 	nt = INFINITY;
 	//check for triangle intersection
-	for (int i = 0; i < objs.mesh1->poly_count; i++)
-	{
-		float t, u, v;
-
-		if (rayIntersect(cam_ray, objs.mesh1->d_tri_arr[i], t, u, v))
-		{
-
-			if (t < nt)
+	float temp;
+	
+		for (int i = 0; i < objs.mesh1->poly_count; i++)
 			{
-				nt = t;
-				nv = v;
-				nu = u;
-				hit_index = i;
-				hit_type = 0;
+				float t, u, v;
+
+				if (objs.mesh1->rayIntersect(cam_ray, objs.mesh1->d_tri_arr[i], t, u, v))
+				{
+                       
+					if (t < nt)
+					{
+						nt = t;
+						nv = v;
+						nu = u;
+						hit_index = i;//objs.mesh1->d_box[j].d_indexes[i];
+						hit_type = 0;
+					}
+				}
+			}
+//	}
+		//checkfor sphere intersection
+		for (int i = 0; i < objs.sphere_count; i++)
+		{
+			float t;
+			if (objs.d_spheres[i].intersect(cam_ray, t))
+			{
+				if (t < nt)
+				{
+					nt = t;
+					hit_index = i;
+					hit_type = 1;
+				}
 			}
 		}
-	}
-	//checkfor sphere intersection
-	for (int i = 0; i < objs.sphere_count; i++)
-	{
-		float t;
-		if (objs.d_spheres[i].intersect(cam_ray, t))
+
+		//check for plane intersection
+		for (int i = 0; i < objs.plane_count; i++)
 		{
-			if (t < nt)
+			float t;
+
+			if (objs.d_planes[i].intersect(cam_ray, t))
 			{
-				nt = t;
-				hit_index = i;
-				hit_type = 1;
+				if (t < nt)
+				{
+					nt = t;
+					hit_index = i;
+					hit_type = 2;
+				}
 			}
 		}
-	}
-
-	//check for plane intersection
-	for (int i = 0; i < objs.plane_count; i++)
-	{
-		float t;
-
-		if (objs.d_planes[i].intersect(cam_ray, t))
-		{
-			if (t < nt)
-			{
-				nt = t;
-				hit_index = i;
-				hit_type = 2;
-			}
-		}
-	}
+	
 	if (nt != INFINITY) {
 		//check what type of object the ray hitted and calculate the normal 
         // 0 = triangle, 1 = sphere, 2 = plane
@@ -940,7 +1073,7 @@ bool castRay(object &objs,ray &cam_ray,int &hit_type,int &hit_index,float &nt,fl
 				normal = objs.mesh1->d_tri_arr[hit_index].normal;
 			}
 			//calc the texture vertices
-			tx = ((1 - nu - nv) * objs.mesh1->d_tri_arr[hit_index].vt[0].u) + (nu * objs.mesh1->d_tri_arr[hit_index].vt[1].u) + (nv * objs.mesh1->d_tri_arr[hit_index].vt[2].u);  //(int)(((nu + 1.0f) / 2.0f) * maxX)-1;
+		    tx = ((1 - nu - nv) * objs.mesh1->d_tri_arr[hit_index].vt[0].u) + (nu * objs.mesh1->d_tri_arr[hit_index].vt[1].u) + (nv * objs.mesh1->d_tri_arr[hit_index].vt[2].u);  //(int)(((nu + 1.0f) / 2.0f) * maxX)-1;
 			ty = ((1 - nu - nv) * objs.mesh1->d_tri_arr[hit_index].vt[0].v) + (nu * objs.mesh1->d_tri_arr[hit_index].vt[1].v) + (nv * objs.mesh1->d_tri_arr[hit_index].vt[2].v);//((float)maxY -((nv + 1.0f) / 2.0f) * maxY)-1;
 
 			new_org = add(normal, add(cam_ray.Org, multiply(cam_ray.Dir, nt)));
@@ -960,7 +1093,7 @@ bool castRay(object &objs,ray &cam_ray,int &hit_type,int &hit_index,float &nt,fl
 		if (hit_type == 2) {
 			new_org = add(cam_ray.Org, multiply(cam_ray.Dir, nt));
 			normal = objs.d_planes[hit_index].normal;
-			normal = normalise(normal);
+		//	normal = normalise(normal);
 
 			//texture vertices
 			tx = 0.5; //hit_point.x;
@@ -974,20 +1107,17 @@ bool castRay(object &objs,ray &cam_ray,int &hit_type,int &hit_index,float &nt,fl
 	return false;
 }
 __device__
-float castLightRay(object& objs, vec3d& start,light &l,vec3d &normal) {
+float castLightRay(object& objs, vec3d& start,light &l,vec3d &normal,int &seed) {
 
 	float b = 0;
 	bool shadow = false;
 
 	vec3d toL = normalise(sub( l.pos,start));
-	//curandState s;	
-	//curand_init(start.x*start.y+start.z*start.z, 0, 0, &s);
-
+	curandState s;	
 	
-	for (int j = 0; j < 20; j++) {
-	    
-	 
-//		vec3d toL = normalise(sub(l.pos, start));
+	
+	for (int j = 0; j < 10; j++) {
+	
 		vec3d P = cross(toL, vec3d({ 0,1,0 }));
 		
 		if (P.x == 0 && P.y == 0 && P.z == 0) {
@@ -997,8 +1127,14 @@ float castLightRay(object& objs, vec3d& start,light &l,vec3d &normal) {
 		vec3d toEdge = normalise(sub(add(l.pos,multiply(P,l.size)),start));
 		float angle = cosf((dotproduct(toL, toEdge)) * 2);
 	
-		float _z =  (float)j/20* (1.0f - angle) + angle;
-		float phi = (float)j/20 * 2.f * 3.1415f;
+		float _z =  (float)j/10* (1.0f - angle) + angle;
+		float phi = (float)j/10 * 2.f * 3.1415f;
+/*       curand_init(seed += j, 0, 0, &s);
+  
+		float _z =  curand_uniform(&s) * (1.0f - angle) + angle;
+		curand_init(seed+=j, 0, 0, &s);
+
+		float phi = curand_uniform(&s) * 2.f * 3.1415f;*/ 
 
 		float x = sqrtf(1.f - _z * _z) * cosf(phi);
 		float y = sqrtf(1.f - _z * _z) * sinf(phi);
@@ -1006,20 +1142,19 @@ float castLightRay(object& objs, vec3d& start,light &l,vec3d &normal) {
 		vec3d axis = normalise(cross(vec3d({ 0, 0, 1 }), normalise(toL)));
 		float nAngle = acosf(dotproduct(normalise(toL), vec3d({ 0,0,1 })));
 
-		
-
-		// = normalise(multiply(sub(cam_ray.Org, P), -1));
 		vec3d new_dir = normalise(sub(l.pos, multiply(rotate(nAngle, axis), vec3d({x,y,_z}))));
 		ray light_ray({ start,new_dir });
 	   
 		shadow = false;
+		
+		float temp;
 
 		//check for triangle intersection
 	for (int i = 0; i < objs.mesh1->poly_count; i++)
 	{
 		float t, u, v;
 		
-		if (rayIntersect(light_ray, objs.mesh1->d_tri_arr[i], t, u, v))
+		if (objs.mesh1->rayIntersect(light_ray, objs.mesh1->d_tri_arr[i], t, u, v))
 		{
 			shadow = true;
 			break;
@@ -1051,10 +1186,8 @@ float castLightRay(object& objs, vec3d& start,light &l,vec3d &normal) {
 		//	return true;
 		}
 	 }
-//	if (shadow)
-//		break;
 	if (!shadow) {
-	    	b += 0.05;
+	    	b += 0.1;
        }
 	}
 	float a = dotproduct(normal, toL);
@@ -1063,10 +1196,12 @@ float castLightRay(object& objs, vec3d& start,light &l,vec3d &normal) {
 }
 
 __global__
-void globalilumnation(object objs, ray reflect_ray) {
+void globalilumnation(object &obj, ray &reflect_ray,float &r, float &g, float &b) {
 	
 	float nv, nu, n_t;
 	int hit_type, hit_index;
+
+
 
 //	if (castRay(objs, reflect_ray, hit_type, hit_index, n_t, nu, nv)) {
 /*
@@ -1139,7 +1274,8 @@ void rayTrace(unsigned int* pixels, int width, int height, float aspect, object&
 
 		float dx = aspect * (2 * (x + 0.5) / (float)width) - 1 ;
 		float dy = aspect * (2 * (y + 0.5) / (float)height)*((float)height/width) - 1;
-	float nu, nv, n_t;
+	
+		float nu, nv, n_t;
 
 	vec3d eyePos({0,0,(-1/aspect)});
 	vec3d dir = vec3d({ dx,dy,0 });
@@ -1150,6 +1286,7 @@ void rayTrace(unsigned int* pixels, int width, int height, float aspect, object&
 	vec3d new_org;
 	vec3d normal;
 	float tx, ty;
+
 	//if no ray intersect set the color of the skybox 
 	if (castRay(objs, cam_ray, hit_type, hit_index, n_t, nu, nv,new_org,normal,tx,ty)) {
 
@@ -1166,67 +1303,34 @@ void rayTrace(unsigned int* pixels, int width, int height, float aspect, object&
 
 		int c_index = (int)(ty * maxY) * maxX + (int)(tx * maxX);
 
-		float r = objs.texture->rBuff->data[c_index] * 254, g = objs.texture->gBuff->data[c_index] * 254, b = objs.texture->bBuff->data[c_index] * 254;
-		
-	/*	for (int i = 0; i < 3; i++) {
-		    //calculate the global ilumination the object recives
-	    	// im jusing a routhness value to ditermen how many rays should be cast
-		for(int s = 0; s < 3; s++){
-			ray start_ray(new_org,normalise(cam.rotateDir(reflect_ray.Dir, (float)i, (float)i)));
+		float r = objs.texture->rBuff->data[c_index], g = objs.texture->gBuff->data[c_index], b = objs.texture->bBuff->data[c_index];
+	
+		//global illumination color contribution  values
+		float Gr, Gg, Gb;
+//		globalilumnation(objs,cam_ray,Gr,Gg,Gb);
 
-			for (int depth = 0; depth < 1; depth++) {
-				//	int rays = objs.mat->roughness*10+1;
-				//	globalilumnation <<<1, rays>>> (objs,reflect_ray);
-				//	cudaDeviceSynchronize();
-				vec3d newOrg, r_normal;
-
-				if (castRay(objs, start_ray, hit_type, hit_index, n_t, nu, nv, newOrg, r_normal, tx, ty)) {
-					c_index = (int)(ty * maxY) * maxX + (int)(tx * maxX);
-					r += objs.texture->rBuff->data[c_index], g += objs.texture->gBuff->data[c_index], b += objs.texture->bBuff->data[c_index];
-
-					start_ray.Dir = reflect(start_ray.Dir, r_normal);
-					start_ray.Org = newOrg;
-				}
-				else {
-					float tr = 1, tg = 1, tb = 1;
-					sky.getFColor(start_ray, tr, tg, tb);
-					r += tr;
-					g += tg;
-					b += tb;
-					break;
-				}
-			}
-		}
-	}
-		    r = (float)r / 10.f;
-			g = (float)g / 10.f;
-			b = (float)b / 10.f;*/
-
+		int seed = threadIdx.y + blockIdx.x * blockIdx.y + threadIdx.x*3;
+	
+		float fr = 0, fg = 0, fb = 0;
 		//calc light value
 	    for (int i = 0; i < light_size; i++)
 		{
+			
 			bool shadow = false;
+			seed*= seed;
 
-	//		if (!castLightRay(objs, light_ray,lights[i])) {
-		//		float angle = dotproduct(obj_normal, light_ray.Dir);
-				float brightness =  castLightRay(objs, start_O, lights[i],obj_normal);
-			//	brightness *= dotproduct(start_O, );
-				r += brightness * lights[i].r;
-				g += brightness * lights[i].g;
-				b += brightness * lights[i].b;
-	//		}
-	//		else {
-	//			dr *= 0.1 * r;
-	//			dg *= 0.1 * g;
-	//			db *= 0.1 * b;
-	//		}
+				float brightness =  castLightRay(objs, start_O, lights[i],obj_normal,seed);
+		
+				fr += brightness * lights[i].r *r;
+				fg += brightness * lights[i].g *g;
+				fb += brightness * lights[i].b *b;
+
 		}
 
 
 		
 
-		pixels[y * width + x] = rgbToInt(r, g, b );
-
+		pixels[y * width + x] = rgbToInt(fr * 254, fg * 254, fb * 254);
 		return;
    }
 	   float r, g, b;
@@ -1239,23 +1343,24 @@ void rayTrace(unsigned int* pixels, int width, int height, float aspect, object&
 int light_size = 3;
 int tx =8, ty = 8;
 light* lights;
-camera cam({ 0,0,0 }, { 0, 0,0},0.f);
+camera cam({ 0,5,20 }, { 0, 0,-1},0.f);
 
-int lightByteSize = sizeof(float) * 21;
+int lightByteSize = sizeof(float) * 37*light_size;
 
 object* objs = new object();
-skybox* Skybox = new skybox("C:\\Users\\Leon\\Downloads\\sky_box.jpg",100);
+skybox* Skybox = new skybox("C:\\Users\\Leon\\Downloads\\sky_box.jpg",10000);
 float aspect = tan((90 * 0.5 * 3.1415) / 180);
-float yawY = 0,yawX = 0;
+float yawY = 10,yawX = 0;
 
 void onStart() {
 
-	objs->loadMesh("C:\\Users\\Leon\\Downloads\\sphere.obj", "C:\\Users\\Leon\\Downloads\\marble.png", material(0,0,0));
+	objs->loadMesh("C:\\Users\\Leon\\Downloads\\.obj", "C:\\Users\\Leon\\Downloads\\wood.jpg", material(0,0,0));
 
-	light m_light({ 0,-100,0 }, 5, 1, 1, 1);
-	light b_light({ 10,-50,-10 }, 1, 1, 1, 1);
-	light c_light({ -10,-50,10 }, 1, 1, 1, 1);
-	lights = new light[3] {m_light,b_light,c_light};
+	light m_light({ 0,50,50 }, 20, 1, 0, 0);
+	light b_light({ 0,50,-50 }, 20, 0, 1, 0);
+	light c_light({ 0,50,0 }, 20, 0, 0, 1);
+
+	lights = new light[3]{ m_light ,b_light,c_light};
 
 }
 
