@@ -351,63 +351,62 @@ public:
 		this->bounds[1] = c2;
 	}
 	cube() {  }
-	__device__
-	bool intersects(ray& cam_ray, float& t) {
-
-		vec3d new_dir;
-
-		new_dir.x = 1.f / cam_ray.Dir.x;
-		new_dir.y = 1.f / cam_ray.Dir.y;
-		new_dir.z = 1.f / cam_ray.Dir.z;
-
-		int sign[3] = {(new_dir.x < 0),(new_dir.y < 0) ,(new_dir.z < 0) };
-
-		float xmin = (bounds[sign[0]].x - cam_ray.Org.x) * new_dir.x;
-		float xmax = (bounds[1-sign[0]].x - cam_ray.Org.x) * new_dir.x;
-		float ymin = (bounds[sign[1]].y - cam_ray.Org.y) * new_dir.y;
-		float ymax = (bounds[1-sign[1]].y - cam_ray.Org.y) * new_dir.y;
-
-		if ((xmin > ymax) || (ymin > xmax))
-			return false;
-
-		if (ymin > xmin)
-			xmin = ymin;
-
-		if (ymax < xmax)
-			xmax = ymax;
-
-		float zmin = (bounds[sign[2]].z - cam_ray.Org.z) * new_dir.z;
-		float zmax = (1-bounds[sign[2]].z - cam_ray.Org.z) * new_dir.z;
-
-		if ((xmin > zmax) || (zmin > xmax))
-			return false;
-
-		if (zmin > xmin)
-			xmin = zmin;
-
-		if (zmax < xmax)
-			xmax = zmax;
-
-		t = 0;
-
-		return true;
-		
-	}
+	
 	vec3d bounds[2];
 };
+__device__
+bool Cubeintersects(ray& cam_ray, float& t, cube &c) {
 
-class Bvhbox {
+	vec3d new_dir;
+
+	new_dir.x = 1.f / cam_ray.Dir.x;
+	new_dir.y = 1.f / cam_ray.Dir.y;
+	new_dir.z = 1.f / cam_ray.Dir.z;
+
+	int sign[3] = { (new_dir.x < 0),(new_dir.y < 0) ,(new_dir.z < 0) };
+
+	float xmin = (c.bounds[sign[0]].x - cam_ray.Org.x) * new_dir.x;
+	float xmax = (c.bounds[1 - sign[0]].x - cam_ray.Org.x) * new_dir.x;
+	float ymin = (c.bounds[sign[1]].y - cam_ray.Org.y) * new_dir.y;
+	float ymax = (c.bounds[1 - sign[1]].y - cam_ray.Org.y) * new_dir.y;
+
+	if ((xmin > ymax) || (ymin > xmax))
+		return false;
+
+	if (ymin > xmin)
+		xmin = ymin;
+
+	if (ymax < xmax)
+		xmax = ymax;
+
+	float zmin = (c.bounds[sign[2]].z - cam_ray.Org.z) * new_dir.z;
+	float zmax = (1 - c.bounds[sign[2]].z - cam_ray.Org.z) * new_dir.z;
+
+	if ((xmin > zmax) || (zmin > xmax))
+		return false;
+
+	if (zmin > xmin)
+		xmin = zmin;
+
+	if (zmax < xmax)
+		xmax = zmax;
+
+	t = 0;
+
+	return true;
+
+}
+
+class Bvhbox :public memManager {
 public:
 
 	Bvhbox(vec3d c1,vec3d c2, int *in, int len) {
 
-		bvhbox = new cube( c1,c2 );
-		
-        checkCudaErrors(cudaMallocManaged((void**)&d_indexes, sizeof(int)* len));
-		cudaMemcpy(d_indexes, in, sizeof(int) * len,cudaMemcpyHostToDevice);
+		cube bvhbox( c1,c2 );
 	}
+	Bvhbox(){}
 
-	cube *bvhbox;
+	cube bvhbox;
 	int *indexes;
 	int *d_indexes;
 	int length;
@@ -436,10 +435,17 @@ public:
 	triangle *d_tri_arr;
 	triangle* h_tri_arr;
     int poly_count;
+	int bvhbox_count = 1;
 	bool has_normals = false;
+	Bvhbox *h_box;
+	Bvhbox *d_box;
+	cube *bvhbox;
 
 	mesh(string filename)
 	{
+
+		
+
 		vector<triangle> tris;
 		ifstream file(filename);
 
@@ -632,17 +638,18 @@ public:
 
 			h_tri_arr[i] = tris[i];
 		}
-		
+
 		tris.clear();
 		return;
 	}
     
 
-	Bvhbox* generateBVH(triangle* tris, int length) {
+	cube generateBVH(triangle* tris, int length,int bvh_count) {
 
-		
-		int height;
+		std::vector<Bvhbox> cubes;
 
+		bool vertical = true;
+         
 		vec3d max = tris[0].points[0];
 		vec3d min = tris[0].points[0];
 
@@ -671,87 +678,51 @@ public:
 				}
 			}
 		}
-		height = max.y - (max.y - min.y) / 2;
-		vec3d tempMin = max;
 
-		for (int i = 0; i < length; i++) {
+/*
+		for (int i = 0; i < bvh_count; i++) {
 
-			for (int x = 0; x < 3; x++) {
+			float size;
 
-				if (tris[i].points[x].x < tempMin.x && tris[i].points[x].y > height) {
-					tempMin.x = tris[i].points[x].x;
+			//split the box 
+			if (vertical) {
+				size = max.y - (max.y - min.y) / 2.f;
 
-				}
-				if (tris[i].points[x].y < tempMin.y && tris[i].points[x].y > height) {
-					tempMin.y = tris[i].points[x].y;
 
-				}
-				if (tris[i].points[x].y < tempMin.y && tris[i].points[x].y > height) {
-					tempMin.y = tris[i].points[x].y;
 
-				}
 			}
-		}
+			else {
+				size = max.x - (max.x - min.x) / 2.f;
 
 
-		vec3d tempMax = min;
 
-		for (int i = 0; i < length; i++) {
-
-			for (int x = 0; x < 3; x++) {
-
-				if (tris[i].points[x].x > tempMax.x && tris[i].points[x].y < height) {
-					tempMax.x = tris[i].points[x].x;
-
-				}
-
-				if (tris[i].points[x].y > tempMax.y && tris[i].points[x].y < height) {
-					tempMax.y = tris[i].points[x].y;
-
-				}
-
-				if (tris[i].points[x].z > tempMax.z && tris[i].points[x].y < height) {
-					tempMax.z = tris[i].points[x].z;
-
-				}
 			}
+			//find each corner of the bounding box
+
+			//min point
+
+
+			//max point
+
+			//set the triangle indexes 
 		}
+*/
 
-		std::vector<int> indexs_1, indexs_2;
-
-		for (int j = 0; j < 2; j++) {
-
-			for (int i = 0; i < length; i++) {
-
-				if (tris[i].points[0].y > height) {
-					indexs_1.push_back(i);
-				}
-				if (tris[i].points[0].y < height) {
-					indexs_2.push_back(i);
-				}
-			}
-		}
-
-		int* i1 = new int[indexs_1.size()];
-		int* i2 = new int[indexs_2.size()];
-
-		for (int i = 0; i < indexs_1.size(); i++) {
-			i1 = new int(indexs_1[i]);
-		}
-		for (int i = 0; i < indexs_2.size(); i++) {
-			i2 = new int(indexs_2[i]);
-		}
-		Bvhbox* b = new Bvhbox[2]{
-		Bvhbox(min, tempMax, i1, indexs_2.size()),
-		Bvhbox(tempMin, max, i2, indexs_1.size())
-		};
+		cube b(min,max);
 
 		return b;
 	}
 
 	
 	void allocMem() {
-			int size = getBytes();
+		
+		// move bvh array to device
+		int Bsize = sizeof(float)*6*bvhbox_count+sizeof(int)+sizeof(int)*1;
+		checkCudaErrors(cudaMallocManaged((void**)&d_box, Bsize));
+		memcpy(d_box, h_box, Bsize);
+
+		// move triangle array to device
+		int size = getBytes();
 		checkCudaErrors(cudaMallocManaged((void**)&d_tri_arr, size));
 		memcpy(d_tri_arr, h_tri_arr, size);
 	}
@@ -948,7 +919,7 @@ public:
 		return sizeof(float) * 8 * sphere_count;
 	}
 
-	int sphere_count = 100, plane_count = 1;
+	int sphere_count = 0, plane_count = 1;
 	int depth = 3;
 	sphere* s1;
 	sphere* d_spheres;
@@ -1009,13 +980,18 @@ bool castRay(object &objs,ray &cam_ray,int &hit_type,int &hit_index,float &nt,fl
 	//check for triangle intersection
 	float temp;
 	
-		for (int i = 0; i < objs.mesh1->poly_count; i++)
+	for (int j = 0; j < objs.mesh1->bvhbox_count; j++)
+	{
+
+		if (Cubeintersects(cam_ray, temp, objs.mesh1->bvhbox)) {
+
+			for (int i = 0; i < objs.mesh1->poly_count; i++)
 			{
 				float t, u, v;
 
 				if (objs.mesh1->rayIntersect(cam_ray, objs.mesh1->d_tri_arr[i], t, u, v))
 				{
-                       
+
 					if (t < nt)
 					{
 						nt = t;
@@ -1026,7 +1002,8 @@ bool castRay(object &objs,ray &cam_ray,int &hit_type,int &hit_index,float &nt,fl
 					}
 				}
 			}
-//	}
+		}
+	}
 		//checkfor sphere intersection
 		for (int i = 0; i < objs.sphere_count; i++)
 		{
@@ -1102,7 +1079,6 @@ bool castRay(object &objs,ray &cam_ray,int &hit_type,int &hit_index,float &nt,fl
 		}
 		return true;
 	}
-		
 	
 	return false;
 }
@@ -1354,7 +1330,7 @@ float yawY = 10,yawX = 0;
 
 void onStart() {
 
-	objs->loadMesh("C:\\Users\\Leon\\Downloads\\.obj", "C:\\Users\\Leon\\Downloads\\wood.jpg", material(0,0,0));
+	objs->loadMesh("C:\\Users\\Leon\\Downloads\\sphere.obj", "C:\\Users\\Leon\\Downloads\\wood.jpg", material(0,0,0));
 
 	light m_light({ 0,50,50 }, 20, 1, 0, 0);
 	light b_light({ 0,50,-50 }, 20, 0, 1, 0);
