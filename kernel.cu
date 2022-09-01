@@ -435,12 +435,13 @@ public:
 	triangle *d_tri_arr;
 	triangle* h_tri_arr;
     int poly_count;
-	int bvhbox_count = 1;
+	int bvhbox_count = 2;
 	bool has_normals = false;
 	Bvhbox *h_box;
 	Bvhbox *d_box;
 	cube *bvhbox;
-
+    int* indexes;
+	
 	mesh(string filename)
 	{
 
@@ -632,11 +633,13 @@ public:
 		poly_count = tris.size();
 
 
-		 h_tri_arr = new triangle[poly_count];
+		h_tri_arr = new triangle[poly_count];
+		indexes = new int[poly_count];
 
 		for (int i = 0; i < poly_count; i++) {
 
 			h_tri_arr[i] = tris[i];
+			indexes[i] = i;
 		}
 
 		tris.clear();
@@ -655,6 +658,7 @@ public:
 
 		for (int i = 0; i < length; i++) {
 
+			
 			for (int x = 0; x < 3; x++) {
 
 				if (tris[i].points[x].x > max.x) {
@@ -711,6 +715,66 @@ public:
 		cube b(min,max);
 
 		return b;
+	}
+
+	void sortTriangles() {
+
+		vec3d high = h_tri_arr[poly_count - 1].points[0];
+		vec3d low = h_tri_arr[0].points[0];
+
+
+	}
+	bool isgreater(vec3d vec1, vec3d vec2) {
+
+		float a[3]{vec1.x, vec1.y, vec1.z}; 
+		float b[3]{ vec2.x, vec2.y, vec2.z };
+
+		for (int i = 0; i < 3; i++) {
+			for (int j = 0; j < 3; j++) {
+				if (a[i] > b[j])
+					return true;
+			}
+		}
+		return false;
+
+	}
+	vec3d getBiggest(triangle tri) {
+	
+		if (isgreater(tri.points[0], tri.points[1])) {
+			return tri.points[0];
+		}
+		if (isgreater(tri.points[0], tri.points[2])) {
+			return tri.points[0];
+		}
+		if (isgreater(tri.points[1], tri.points[2])) {
+			return tri.points[1];
+		}
+		return tri.points[2];
+	}
+
+	int *split(int* arr, int low, int high,int *index,int length) {
+    
+		int under_size;
+		int over_size;  
+		//low index count
+		int i;
+		//high index count
+		int j;
+
+		while()
+			if (isgreater(getBiggest(d_tri_arr[index[high]]),getBiggest(d_tri_arr[index[i]]))) {
+				i++;
+
+			}
+	//		if (isgreater(getBiggest(d_tri_arr[index[i]]),getBiggest(d_tri_arr[index[high]]))) {
+	//			big_arr.push_back(index[i]);
+	//		}
+		}
+	}
+	void quikSort(int *indexes,vec3d low, vec3d high) {
+
+	
+
 	}
 
 	
@@ -982,8 +1046,7 @@ bool castRay(object &objs,ray &cam_ray,int &hit_type,int &hit_index,float &nt,fl
 	
 	for (int j = 0; j < objs.mesh1->bvhbox_count; j++)
 	{
-
-		if (Cubeintersects(cam_ray, temp, objs.mesh1->bvhbox)) {
+		if (Cubeintersects(cam_ray, temp, objs.mesh1->bvhbox[j])) {
 
 			for (int i = 0; i < objs.mesh1->poly_count; i++)
 			{
