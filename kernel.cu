@@ -13,6 +13,17 @@
 #include<stdlib.h>
 #include"curand_kernel.h"
 
+#ifndef max
+
+#define max( a, b ) ( ((a) > (b)) ? (a) : (b) )
+
+#endif
+
+#ifndef min
+
+#define min( a, b ) ( ((a) < (b)) ? (a) : (b) )
+
+#endif
 #define checkCudaErrors(val) check_cuda( (val), #val, __FILE__, __LINE__ )
 
 using namespace std;
@@ -35,6 +46,16 @@ __device__ __host__
 vec3d sub(vec3d& vec1, vec3d& vec2) {
 
 	return { vec1.x - vec2.x, vec1.y - vec2.y, vec1.z - vec2.z };
+}
+__device__ __host__
+vec3d sub(float k, vec3d& vec2) {
+
+	return { k - vec2.x, k - vec2.y, k - vec2.z };
+}
+__device__ __host__
+vec3d divide(vec3d& vec1, float k) {
+
+	return { vec1.x / k, vec1.y / k, vec1.z / k};
 }
 __device__ __host__
 vec3d add(vec3d& vec1, vec3d& vec2) {
@@ -271,7 +292,9 @@ public:
 	__device__
 	bool intersect(ray &cam_ray, float& t) {
 
-		float t0, t1;
+	/*	
+	// geometric solution 
+	float t0, t1;
 
 		vec3d L = sub(orgin,cam_ray.Org);
 		float tca = dotproduct(L, cam_ray.Dir);
@@ -298,7 +321,36 @@ public:
 		}
 		t = t0;
 		return true;
+    */
+		// quadratic solution
+		/*
+		(xd^2 + yd^2 + zd^2)* t^2 +
+         [2[xd * (xo - a) + yd * (yo - b) + zd *(zo - c)]] * t   +
+         [(xo - a)^2 + (yo - b)^2 + (zo - c^)2 - r^2]      * 1
+         = 0
+		*/
+		float A = (cam_ray.Dir.x * (cam_ray.Dir.x) + cam_ray.Dir.y * (cam_ray.Dir.y) + cam_ray.Dir.z * (cam_ray.Dir.z));
+		float B = 2 * (cam_ray.Dir.x * (cam_ray.Org.x - orgin.x) + cam_ray.Dir.y * (cam_ray.Org.y - orgin.y) + cam_ray.Dir.z * (cam_ray.Org.z - orgin.z));
+		float C = (cam_ray.Org.x - orgin.x)* (cam_ray.Org.x - orgin.x) + (cam_ray.Org.y - orgin.y) * (cam_ray.Org.y - orgin.y) + (cam_ray.Org.z - orgin.z) * (cam_ray.Org.z - orgin.z) - radius*radius;
 
+		t = (-B + sqrt(B * B - 4 * A * C)) / (2 * A);
+
+		if (t == 0.f) {
+			return true;
+		}
+
+		if (t >= 0.0001) {
+
+			float t2 = (-B - sqrt(B * B - 4 * A * C)) / (2 * A);
+			
+			if (t > t2) {
+				t = t2;
+
+				return true;
+			}
+			return true;
+		}
+		return false;
 	}
 	bool reflective = false;
 	float radius;
@@ -330,72 +382,131 @@ public:
 	bool reflective = false;
 	vec3d normal;
 };
-__device__
-bool planeIntersect(ray& cam_ray,plane p, float& t) {
 
-	float denom = dotproduct(p.normal, cam_ray.Dir);
-	if (denom >= 0.0001) {
-		vec3d pl0 = sub(p.orgin, cam_ray.Org);
-		t = dotproduct(pl0, p.normal);
-		return (t >= 0);
-	}
-	return false;
-}
 
 class cube : public shape{
 
 public:
 
 	cube(vec3d c1,vec3d c2) {
+
 		this->bounds[0] = c1;
 		this->bounds[1] = c2;
+		this->orgin = divide(add(c1, c2),2);
 	}
 	cube() {  }
 	
+	__device__
+	bool intersect(ray& cam_ray, float& t) {
+
+		/*vec3d new_dir({(1.f / cam_ray.Dir.x),(1.f / cam_ray.Dir.y),(1.f / cam_ray.Dir.z)});
+
+		int sign[3] = { (new_dir.x < 0),(new_dir.y < 0) ,(new_dir.z < 0) };
+
+		float tmin = (bounds[sign[0]].x - cam_ray.Org.x) * new_dir.x;
+		float tmax = (bounds[1 - sign[0]].x - cam_ray.Org.x) * new_dir.x;
+		float tymin = (bounds[sign[1]].y - cam_ray.Org.y) * new_dir.y;
+		float tymax = (bounds[1 - sign[1]].y - cam_ray.Org.y) * new_dir.y;
+
+		if ((tmin > tymax) || (tymin > tmax))
+			return false;
+
+		if (tymin > tmin)
+			tmin = tymin;
+
+		if (tymax < tmax)
+			tmax = tymax;
+
+		float tzmin = (bounds[sign[2]].z - cam_ray.Org.z) * new_dir.z;
+		float tzmax = (1 - bounds[sign[2]].z - cam_ray.Org.z) * new_dir.z;
+
+		if ((tmin > tzmax) || (tzmin > tmax))
+			return false;
+
+		if (tzmin > tmin)
+			tmin = tzmin;
+
+	//	if (tzmax < tmax)
+	//		tmax = tzmax;
+
+			t = tmin;
+	
+		
+
+		float xmax, xmin,ymax,ymin,zmax,zmin;
+
+		check_axis(cam_ray.Org.x, cam_ray.Dir.x,xmin,xmax);
+		check_axis(cam_ray.Org.y, cam_ray.Dir.y, ymin,ymax);
+		check_axis(cam_ray.Org.z, cam_ray.Dir.z, zmin, zmax);
+
+		float tmin = xmin > ymin && xmin > zmin? xmin: ymin > xmin && ymin > zmin ? ymin: zmin;
+		float tmax = xmax < ymax && xmax < zmax ? xmax : ymax < xmax && ymax < zmax ? ymax : zmax;
+
+		if (tmin >= tmax)
+			return false;
+
+	//		float temp = tmax;
+	//		tmax = tmin;
+	//		tmin = temp;
+	
+		t = tmin;
+
+		return true;
+*/
+		float dirx = 1.f / cam_ray.Dir.x;
+		float diry = 1.f / cam_ray.Dir.y;
+		float dirz = 1.f / cam_ray.Dir.z;
+
+		float t1 = (bounds[0].x - cam_ray.Org.x) * dirx;
+		float t2 = (bounds[1].x - cam_ray.Org.x) * dirx;
+
+		float t3 = (bounds[0].y - cam_ray.Org.y) * diry;
+		float t4 = (bounds[1].y - cam_ray.Org.y) * diry;
+
+		float t5 = (bounds[0].z - cam_ray.Org.z) * dirz;
+		float t6 = (bounds[1].z - cam_ray.Org.z) * dirz;
+
+		float tmin = max(max(min(t1, t2), min(t3, t4)),min(t5,t6));
+		float tmax = min(min(max(t1, t2), max(t3, t4)), max(t5, t6));
+
+		if (tmax < 0) {
+			t = tmax;
+			return false;
+		}
+
+		if (tmax < tmin) {
+			t = tmax;
+			return false;
+		}
+
+		t = tmin;
+		return true;
+	}
+	__device__
+	void check_axis(float orgin, float dir, float& tmin, float &tmax) {
+
+		float tminN = -1 - orgin;
+		float tmaxN = 1 - orgin;
+
+
+		if (fabs(dir) >= 0.0001) {
+			tmin = tminN / dir;
+			tmax = tmaxN / dir;
+		if (tmin > tmax)
+		{
+			float temp = tmax;
+			tmax = tmin;
+			tmin = temp;
+		}
+		}
+		else {
+			tmin = INFINITY;
+			tmax = INFINITY;
+		}
+	}
+	vec3d normals[3] = {{1,0,0},{0,1,0},{0,0,1}};
 	vec3d bounds[2];
 };
-__device__
-bool Cubeintersects(ray& cam_ray, float& t, cube &c) {
-
-	vec3d new_dir;
-
-	new_dir.x = 1.f / cam_ray.Dir.x;
-	new_dir.y = 1.f / cam_ray.Dir.y;
-	new_dir.z = 1.f / cam_ray.Dir.z;
-
-	int sign[3] = { (new_dir.x < 0),(new_dir.y < 0) ,(new_dir.z < 0) };
-
-	float xmin = (c.bounds[sign[0]].x - cam_ray.Org.x) * new_dir.x;
-	float xmax = (c.bounds[1 - sign[0]].x - cam_ray.Org.x) * new_dir.x;
-	float ymin = (c.bounds[sign[1]].y - cam_ray.Org.y) * new_dir.y;
-	float ymax = (c.bounds[1 - sign[1]].y - cam_ray.Org.y) * new_dir.y;
-
-	if ((xmin > ymax) || (ymin > xmax))
-		return false;
-
-	if (ymin > xmin)
-		xmin = ymin;
-
-	if (ymax < xmax)
-		xmax = ymax;
-
-	float zmin = (c.bounds[sign[2]].z - cam_ray.Org.z) * new_dir.z;
-	float zmax = (1 - c.bounds[sign[2]].z - cam_ray.Org.z) * new_dir.z;
-
-	if ((xmin > zmax) || (zmin > xmax))
-		return false;
-
-	if (zmin > xmin)
-		xmin = zmin;
-
-	if (zmax < xmax)
-		xmax = zmax;
-
-	t = 0;
-
-	return true;
-
-}
 
 class Bvhbox :public memManager {
 public:
@@ -403,12 +514,13 @@ public:
 	Bvhbox(vec3d c1,vec3d c2, int *in, int len) {
 
 		cube bvhbox( c1,c2 );
+		this->indexes = in;
+		this->length = len;
 	}
 	Bvhbox(){}
 
 	cube bvhbox;
 	int *indexes;
-	int *d_indexes;
 	int length;
 };
 
@@ -434,9 +546,11 @@ public:
 	
 	triangle *d_tri_arr;
 	triangle* h_tri_arr;
+
     int poly_count;
 	int bvhbox_count = 2;
 	bool has_normals = false;
+
 	Bvhbox *h_box;
 	Bvhbox *d_box;
 	cube *bvhbox;
@@ -444,9 +558,7 @@ public:
 	
 	mesh(string filename)
 	{
-
 		
-
 		vector<triangle> tris;
 		ifstream file(filename);
 
@@ -761,7 +873,7 @@ public:
 		//high index count
 		int j;
 
-		while()
+	//	while()
 			if (isgreater(getBiggest(d_tri_arr[index[high]]),getBiggest(d_tri_arr[index[i]]))) {
 				i++;
 
@@ -769,7 +881,7 @@ public:
 	//		if (isgreater(getBiggest(d_tri_arr[index[i]]),getBiggest(d_tri_arr[index[high]]))) {
 	//			big_arr.push_back(index[i]);
 	//		}
-		}
+	//	}
 	}
 	void quikSort(int *indexes,vec3d low, vec3d high) {
 
@@ -780,10 +892,10 @@ public:
 	
 	void allocMem() {
 		
-		// move bvh array to device
+	/*	// move bvh array to device
 		int Bsize = sizeof(float)*6*bvhbox_count+sizeof(int)+sizeof(int)*1;
 		checkCudaErrors(cudaMallocManaged((void**)&d_box, Bsize));
-		memcpy(d_box, h_box, Bsize);
+		memcpy(d_box, h_box, Bsize);*/
 
 		// move triangle array to device
 		int size = getBytes();
@@ -925,25 +1037,25 @@ public:
 
 		box->intersect(in_ray, t);
 
-		vec3d hit_point = add(in_ray.Org, multiply(in_ray.Dir, t));
-		vec3d normal = sub(hit_point, box->orgin);
-		normal = normalise(normal);
+			vec3d hit_point = add(in_ray.Org, multiply(in_ray.Dir, t));
+			vec3d normal = sub(hit_point, box->orgin);
+			normal = normalise(normal);
 
-		int x = ((1.f + atan2(normal.z, normal.x) / 3.1415f) * 0.5f * skyboxTex->width);
-		int y = (acosf(normal.y) / 3.1415f * skyboxTex->height);
+			int x = ((1.f + atan2(normal.z, normal.x) / 3.1415f) * 0.5f * skyboxTex->width);
+			int y = (acosf(normal.y) / 3.1415f * skyboxTex->height);
 
-		int index = y * skyboxTex->width + x;
+			int index = y * skyboxTex->width + x;
 
-		r = skyboxTex->rBuff->data[index];
-		g = skyboxTex->gBuff->data[index];
-		b = skyboxTex->bBuff->data[index];
-
+			r = skyboxTex->rBuff->data[index];
+			g = skyboxTex->gBuff->data[index];
+			b = skyboxTex->bBuff->data[index];
+		
 	}
-
+sphere* box;
 protected:
 	
 	sprite* skyboxTex;
-	sphere* box;
+	
 
 };
 
@@ -958,16 +1070,27 @@ public:
 		mesh1 = new mesh(file);
 		mesh1->allocMem();
 		s1 = new sphere[sphere_count];
+		c1 = new cube[cube_count];
 		planes = new plane({ 0,0,0 }, normalise(vec3d({ 0,1, 0 })));
 
 		for (int i = 0; i < sphere_count; i++) {
 			s1[i] = sphere({ (float)(rand() % 100) / 10 ,(float)(rand() % 100) / 10,(float)(rand() % 100) / 10 }, (float)(rand() % 100) / 100);
+				
 		}
-
+		for (int i = 0; i < cube_count; i++) {
+			float posx = (float)(rand() % 100) / 0.9;
+			float posy = (float)(rand() % 100) / 0.9;
+			float posz = (float)(rand() % 100) / 0.9;
+			c1[i] = cube({ posx,posy,posz }, { posx-2,posy-2,posz-2 });
+			//c1[i] = cube({ 0,0,0 }, { 5,5,5 });
+		}
+		
 		texture = new sprite(tex);
 		this->mat = new material(mat);
 		sphereAllocMem();
-		planeAllocMem();
+		planeAllocMem();	
+		cubeAllocMem();
+
 	}
 	void sphereAllocMem() {
 		int size = Sphere_getBytes();
@@ -982,11 +1105,22 @@ public:
 	int Sphere_getBytes() {
 		return sizeof(float) * 8 * sphere_count;
 	}
+	int Cube_getBytes() {
+		return sizeof(cube) * cube_count;
+	}
+	void cubeAllocMem() {
+		int size = Cube_getBytes();
+		checkCudaErrors(cudaMallocManaged((void**)&d_cubes, size));
+		memcpy(d_cubes, c1, size);
+	}
+	
 
-	int sphere_count = 0, plane_count = 1;
+	int sphere_count = 1, plane_count = 1,cube_count = 20000;
 	int depth = 3;
 	sphere* s1;
 	sphere* d_spheres;
+	cube* c1;
+	cube* d_cubes;
 	plane* planes;
 	plane* d_planes;
 	mesh* mesh1;
@@ -1044,9 +1178,9 @@ bool castRay(object &objs,ray &cam_ray,int &hit_type,int &hit_index,float &nt,fl
 	//check for triangle intersection
 	float temp;
 	
-	for (int j = 0; j < objs.mesh1->bvhbox_count; j++)
-	{
-		if (Cubeintersects(cam_ray, temp, objs.mesh1->bvhbox[j])) {
+//	for (int j = 0; j < objs.mesh1->bvhbox_count; j++)
+//	{
+//		if (Cubeintersects(cam_ray, temp, objs.mesh1->bvhbox[j])) {
 
 			for (int i = 0; i < objs.mesh1->poly_count; i++)
 			{
@@ -1065,8 +1199,8 @@ bool castRay(object &objs,ray &cam_ray,int &hit_type,int &hit_index,float &nt,fl
 					}
 				}
 			}
-		}
-	}
+//		}
+//	}
 		//checkfor sphere intersection
 		for (int i = 0; i < objs.sphere_count; i++)
 		{
@@ -1078,6 +1212,20 @@ bool castRay(object &objs,ray &cam_ray,int &hit_type,int &hit_index,float &nt,fl
 					nt = t;
 					hit_index = i;
 					hit_type = 1;
+				}
+			}
+		}
+		//check for cube intersection
+		for (int i = 0; i < objs.cube_count; i++)
+		{
+			float t;
+			if (objs.d_cubes[i].intersect(cam_ray, t))
+			{
+				if (t < nt)
+				{
+					nt = t;
+					hit_index = i;
+					hit_type = 3;
 				}
 			}
 		}
@@ -1140,6 +1288,16 @@ bool castRay(object &objs,ray &cam_ray,int &hit_type,int &hit_index,float &nt,fl
 			ty = 0.5;//hit_point.z* mod(1.f);
 
 		}
+		//cube hit
+		if (hit_type == 3) {
+			new_org = add(cam_ray.Org, multiply(cam_ray.Dir, nt));
+			normal = sub(new_org, objs.d_cubes[hit_index].orgin);
+			normal = normalise(normal);
+			//calc the texture vertices
+			tx = (1 + atan2(normal.z, normal.x) / 3.1415) * 0.5;
+			ty = acosf(normal.y) / 3.1415;
+		}
+		
 		return true;
 	}
 	
@@ -1159,9 +1317,9 @@ float castLightRay(object& objs, vec3d& start,light &l,vec3d &normal,int &seed) 
 	
 		vec3d P = cross(toL, vec3d({ 0,1,0 }));
 		
-		if (P.x == 0 && P.y == 0 && P.z == 0) {
-			P.x = 1;
-		}
+	//	if (P.x == 0 && P.y == 0 && P.z == 0) {
+	//		P.x = 1;
+	//	}
 
 		vec3d toEdge = normalise(sub(add(l.pos,multiply(P,l.size)),start));
 		float angle = cosf((dotproduct(toL, toEdge)) * 2);
@@ -1225,6 +1383,19 @@ float castLightRay(object& objs, vec3d& start,light &l,vec3d &normal,int &seed) 
 		//	return true;
 		}
 	 }
+	if (!shadow)
+		//check for plane intersection
+		for (int i = 0; i < objs.cube_count; i++)
+		{
+			float t;
+
+			if (objs.d_cubes[i].intersect(light_ray, t))
+			{
+				shadow = true;
+				break;
+				//	return true;
+			}
+		}
 	if (!shadow) {
 	    	b += 0.1;
        }
@@ -1382,7 +1553,7 @@ void rayTrace(unsigned int* pixels, int width, int height, float aspect, object&
 int light_size = 3;
 int tx =8, ty = 8;
 light* lights;
-camera cam({ 0,5,20 }, { 0, 0,-1},0.f);
+camera cam({ 200,200,200 }, { 0.5, 0,1},0.f);
 
 int lightByteSize = sizeof(float) * 37*light_size;
 
@@ -1393,11 +1564,11 @@ float yawY = 10,yawX = 0;
 
 void onStart() {
 
-	objs->loadMesh("C:\\Users\\Leon\\Downloads\\sphere.obj", "C:\\Users\\Leon\\Downloads\\wood.jpg", material(0,0,0));
+	objs->loadMesh("C:\\Users\\Leon\\Downloads\\.obj", "C:\\Users\\Leon\\Downloads\\wood.jpg", material(0,0,0));
 
-	light m_light({ 0,50,50 }, 20, 1, 0, 0);
-	light b_light({ 0,50,-50 }, 20, 0, 1, 0);
-	light c_light({ 0,50,0 }, 20, 0, 0, 1);
+	light m_light({ 0,50,50 }, 20, 1, 1, 1);
+	light b_light({ 0,50,-50 }, 20, 1, 1, 1);
+	light c_light({ 0,50,0 }, 20, 0, 0, 0);
 
 	lights = new light[3]{ m_light ,b_light,c_light};
 
@@ -1452,6 +1623,8 @@ void checkKey() {
 void update() {
 
 	checkKey();
+	//Skybox->box->orgin = cam.Org;
+
 	unsigned int* pixels;
 	light* d_lights;
 
