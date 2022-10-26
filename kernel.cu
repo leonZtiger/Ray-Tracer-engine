@@ -269,8 +269,8 @@ public:
 
 	    virtual int getBytes() { return 0; }
 	
-	    __device__
-		virtual bool intersects(ray& cam_ray, float& t) { return true; };
+//	    __device__
+//		virtual bool intersect(ray& cam_ray, float& t) { return true; };
 
 	vec3d orgin;
 
@@ -508,19 +508,37 @@ public:
 	vec3d bounds[2];
 };
 
-class Bvhbox :public memManager {
+
+class Bvhbox : memManager{
 public:
 
-	Bvhbox(vec3d c1,vec3d c2, int *in, int len) {
+	Bvhbox(vec3d c1,vec3d c2,int *in,int len) {
 
-		cube bvhbox( c1,c2 );
-		this->indexes = in;
 		this->length = len;
+		this->indexes = in;
+		this->bvhbox = new cube(c1,c2);
+	//	cubeAllocMem(new cube( c1,c2),in);
 	}
 	Bvhbox(){}
 
-	cube bvhbox;
+	int getBytes() {
+		return sizeof(cube);
+	}
+
+	void AllocMem() {
+		int size = getBytes();
+		checkCudaErrors(cudaMallocManaged((void**)&d_bvhbox, size));
+		memcpy(d_bvhbox, bvhbox, size);
+
+		checkCudaErrors(cudaMallocManaged((void**)&d_indexes, sizeof(int)*length));
+		memcpy(d_indexes, indexes, sizeof(int) * length);
+	}
+
+
+	cube *bvhbox;
+	cube *d_bvhbox;
 	int *indexes;
+	int *d_indexes;
 	int length;
 };
 
@@ -538,7 +556,7 @@ unsigned long rgbToInt(int r, int g, int b) {
 }
 
 
-class mesh :public memManager {
+class mesh : public memManager {
 
 public:
     
@@ -548,12 +566,12 @@ public:
 	triangle* h_tri_arr;
 
     int poly_count;
-	int bvhbox_count = 2;
+	int bvhbox_count;
+	int bvhLayer_count = 10;
 	bool has_normals = false;
 
 	Bvhbox *h_box;
 	Bvhbox *d_box;
-	cube *bvhbox;
     int* indexes;
 	
 	mesh(string filename)
@@ -753,89 +771,169 @@ public:
 			h_tri_arr[i] = tris[i];
 			indexes[i] = i;
 		}
+		
+		
+		
+		createBvhMesh();
 
 		tris.clear();
-		return;
 	}
-    
 
-	cube generateBVH(triangle* tris, int length,int bvh_count) {
+	void createBvhMesh() {
 
-		std::vector<Bvhbox> cubes;
+		vector<Bvhbox> tempBoxes;
+		vector<Bvhbox> prevBoxes;
+		int splitDir = 0;
 
-		bool vertical = true;
-         
-		vec3d max = tris[0].points[0];
-		vec3d min = tris[0].points[0];
 
-		for (int i = 0; i < length; i++) {
+		vec3d lowestP = h_tri_arr[0].points[0];
+		vec3d highestP = h_tri_arr[poly_count - 1].points[0];
 
-			
-			for (int x = 0; x < 3; x++) {
+		//find lowest and highest
+		for (int i = 0; i < poly_count; i++) {
 
-				if (tris[i].points[x].x > max.x) {
-					max.x = tris[i].points[x].x;
-				}
-				if (tris[i].points[x].y > max.y) {
-					max.y = tris[i].points[x].y;
-				}
-				if (tris[i].points[x].z > max.z) {
-					max.z = tris[i].points[x].z;
-				}
-
-				if (tris[i].points[x].x < min.x) {
-					min.x = tris[i].points[x].x;
-				}
-				if (tris[i].points[x].y < min.y) {
-					min.y = tris[i].points[x].y;
-				}
-				if (tris[i].points[x].z < min.z) {
-					min.z = tris[i].points[x].z;
-				}
-			}
+			getMinMaxP(h_tri_arr[i], lowestP, highestP);
 		}
 
-/*
-		for (int i = 0; i < bvh_count; i++) {
+		prevBoxes.push_back(Bvhbox(lowestP, highestP, indexes, poly_count));
 
-			float size;
-
-			//split the box 
-			if (vertical) {
-				size = max.y - (max.y - min.y) / 2.f;
+		//	cout << highestP.x << highestP.y << highestP.z<<"\r\n";
+		//	cout << lowestP.x << lowestP.y << lowestP.z;
 
 
+		for (int i = 0; i < bvhLayer_count; i++) {
 
+			for (int j = 0; j < prevBoxes.size(); j++) {
+
+				if (prevBoxes[j].length > 5) {
+					vector<int> newIndexes1;
+					vector<int> newIndexes2;
+
+					if (splitDir == 0) {
+
+						float splitP = (prevBoxes[j].bvhbox->bounds[1].y + prevBoxes[j].bvhbox->bounds[0].y) / 2;
+
+
+
+						for (int z = 0; z < prevBoxes[j].length; z++) {
+
+							if (h_tri_arr[prevBoxes[j].indexes[z]].points[0].y <= splitP) {
+								newIndexes1.push_back(prevBoxes[j].indexes[z]);
+							}
+							else {
+								newIndexes2.push_back(prevBoxes[j].indexes[z]);
+							}
+						}
+					}
+					if (splitDir == 1) {
+
+						float splitP = (prevBoxes[j].bvhbox->bounds[1].x + prevBoxes[j].bvhbox->bounds[0].x) / 2;
+
+
+
+						for (int z = 0; z < prevBoxes[j].length; z++) {
+
+							//	for (int p = 0; p < p; i++) {
+
+
+							if (h_tri_arr[prevBoxes[j].indexes[z]].points[0].x <= splitP) {
+								newIndexes1.push_back(prevBoxes[j].indexes[z]);
+								//	  break;
+							}
+							else {
+								newIndexes2.push_back(prevBoxes[j].indexes[z]);
+
+							}
+
+							//		  break;
+						//		}
+						}
+						//    cout << prevBoxes[j].length << "\r\n";
+					}
+					if (splitDir == 2) {
+
+						float splitP = (prevBoxes[j].bvhbox->bounds[1].z + prevBoxes[j].bvhbox->bounds[0].z) / 2;
+
+
+
+						for (int z = 0; z < prevBoxes[j].length; z++) {
+
+							//	for (int p = 0; p < p; i++) {
+
+
+							if (h_tri_arr[prevBoxes[j].indexes[z]].points[0].z <= splitP) {
+								newIndexes1.push_back(prevBoxes[j].indexes[z]);
+								//	  break;
+							}
+							else {
+								newIndexes2.push_back(prevBoxes[j].indexes[z]);
+
+							}
+
+							//		  break;
+						//		}
+						}
+						//    cout << prevBoxes[j].length << "\r\n";
+					}
+
+					if (newIndexes1.size() != 0) {
+
+						vec3d low = h_tri_arr[newIndexes1[0]].points[0];
+						vec3d high = h_tri_arr[newIndexes1[newIndexes1.size() - 1]].points[0];
+
+						int* toPointerArray = new int[newIndexes1.size()];
+
+						//get each bound of the new bvhboxes
+						for (int z = 0; z < newIndexes1.size(); z++) {
+
+							getMinMaxP(h_tri_arr[newIndexes1[z]], low, high);
+							toPointerArray[z] = newIndexes1[z];
+						}
+
+						tempBoxes.push_back(Bvhbox(low, high, toPointerArray, newIndexes1.size()));
+					}
+					if (newIndexes2.size() != 0) {
+						vec3d low = h_tri_arr[newIndexes2[0]].points[0];
+						vec3d high = h_tri_arr[newIndexes2[newIndexes2.size() - 1]].points[0];
+
+						int* toPointerArray = new int[newIndexes2.size()];
+						//get each bound of the new bvhboxes
+						for (int z = 0; z < newIndexes2.size(); z++) {
+
+							getMinMaxP(h_tri_arr[newIndexes2[z]], low, high);
+							toPointerArray[z] = newIndexes2[z];
+						}
+
+						tempBoxes.push_back(Bvhbox(low, high, toPointerArray, newIndexes2.size()));
+					}
+					splitDir = (splitDir == 0 ? 1 : splitDir == 1 ? 2 : 0);
+				}
+                else {
+				tempBoxes.push_back(prevBoxes[j]);
+                }
 			}
-			else {
-				size = max.x - (max.x - min.x) / 2.f;
-
-
-
-			}
-			//find each corner of the bounding box
-
-			//min point
-
-
-			//max point
-
-			//set the triangle indexes 
+				prevBoxes.clear();
+				prevBoxes = tempBoxes;
+				tempBoxes.clear();
 		}
-*/
+			//split
+			// 0 = vertical 0deg , 1 = horizontal, 2 = vertical 90deg  
 
-		cube b(min,max);
+		//	h_box[0] = Bvhbox(lowestP, highestP, indexes, poly_count);
+			bvhbox_count = prevBoxes.size();
+			h_box = new Bvhbox[bvhbox_count];
 
-		return b;
-	}
+			for (int j = 0; j < prevBoxes.size(); j++) {
 
-	void sortTriangles() {
+				cout << prevBoxes[j].bvhbox->bounds[1].x <<"\r\n";
+				cout << prevBoxes[j].bvhbox->bounds[1].y << "\r\n";
+				cout << prevBoxes[j].bvhbox->bounds[1].z << "\r\n";
 
-		vec3d high = h_tri_arr[poly_count - 1].points[0];
-		vec3d low = h_tri_arr[0].points[0];
-
-
-	}
+				h_box[j] = prevBoxes[j];
+				h_box[j].AllocMem();
+			}
+			cout << bvhbox_count;
+		}
 	bool isgreater(vec3d vec1, vec3d vec2) {
 
 		float a[3]{vec1.x, vec1.y, vec1.z}; 
@@ -848,48 +946,56 @@ public:
 			}
 		}
 		return false;
-
 	}
+	
 	vec3d getBiggest(triangle tri) {
 	
-		if (isgreater(tri.points[0], tri.points[1])) {
+		if (isgreater(tri.points[0], tri.points[1]) && isgreater(tri.points[0], tri.points[2])) {
 			return tri.points[0];
 		}
-		if (isgreater(tri.points[0], tri.points[2])) {
-			return tri.points[0];
-		}
-		if (isgreater(tri.points[1], tri.points[2])) {
+		if (isgreater(tri.points[1], tri.points[0]) && isgreater(tri.points[1], tri.points[2])) {
 			return tri.points[1];
 		}
 		return tri.points[2];
 	}
 
-	int *split(int* arr, int low, int high,int *index,int length) {
-    
-		int under_size;
-		int over_size;  
-		//low index count
-		int i;
-		//high index count
-		int j;
+	vec3d getLowest(triangle tri) {
 
-	//	while()
-			if (isgreater(getBiggest(d_tri_arr[index[high]]),getBiggest(d_tri_arr[index[i]]))) {
-				i++;
+		if (isgreater(tri.points[2], tri.points[0]) && isgreater(tri.points[1], tri.points[0])) {
+			return tri.points[0];
+		}
+		if (isgreater(tri.points[0], tri.points[1]) && isgreater(tri.points[2], tri.points[0])) {
+			return tri.points[1];
+		}
+		return tri.points[2];
+	}
 
+	void getMinMaxP(triangle tri, vec3d &min,vec3d &max) {
+
+		for (int j = 0; j < 3; j++) {
+
+			if (tri.points[j].x > max.x) {
+				max.x = tri.points[j].x;
 			}
-	//		if (isgreater(getBiggest(d_tri_arr[index[i]]),getBiggest(d_tri_arr[index[high]]))) {
-	//			big_arr.push_back(index[i]);
-	//		}
-	//	}
+			if (tri.points[j].y > max.y) {
+				max.y = tri.points[j].y;
+			}
+			if (tri.points[j].z > max.z) {
+				max.z = tri.points[j].z;
+			}
+
+			if (tri.points[j].x < min.x) {
+				min.x = tri.points[j].x;
+			}
+			if (tri.points[j].y < min.y) {
+				min.y = tri.points[j].y;
+			}
+			if (tri.points[j].z < min.z) {
+				min.z = tri.points[j].z;
+			}
+		}
 	}
-	void quikSort(int *indexes,vec3d low, vec3d high) {
 
-	
-
-	}
-
-	
 	void allocMem() {
 		
 	/*	// move bvh array to device
@@ -901,6 +1007,13 @@ public:
 		int size = getBytes();
 		checkCudaErrors(cudaMallocManaged((void**)&d_tri_arr, size));
 		memcpy(d_tri_arr, h_tri_arr, size);
+
+		int Bsize = sizeof(Bvhbox)*bvhbox_count;
+		checkCudaErrors(cudaMallocManaged((void**)&d_box, Bsize));
+		//memcpy(d_box, h_box, Bsize);
+		for(int i = 0; i < bvhbox_count; i++) {
+			d_box[i] = h_box[i];
+		}
 	}
 
 	 __host__
@@ -1071,7 +1184,7 @@ public:
 		mesh1->allocMem();
 		s1 = new sphere[sphere_count];
 		c1 = new cube[cube_count];
-		planes = new plane({ 0,0,0 }, normalise(vec3d({ 0,1, 0 })));
+		planes = new plane({ 0,-4,0 }, normalise(vec3d({ 0,1, 0 })));
 
 		for (int i = 0; i < sphere_count; i++) {
 			s1[i] = sphere({ (float)(rand() % 100) / 10 ,(float)(rand() % 100) / 10,(float)(rand() % 100) / 10 }, (float)(rand() % 100) / 100);
@@ -1115,7 +1228,7 @@ public:
 	}
 	
 
-	int sphere_count = 1, plane_count = 1,cube_count = 20000;
+	int sphere_count = 0, plane_count = 0,cube_count = 0;
 	int depth = 3;
 	sphere* s1;
 	sphere* d_spheres;
@@ -1172,35 +1285,47 @@ vec3d reflect(vec3d &I, vec3d &N) {
 }
 
 __device__
-bool castRay(object &objs,ray &cam_ray,int &hit_type,int &hit_index,float &nt,float&nu,float &nv,vec3d & new_org,vec3d &normal,float & tx, float &ty) {
-	
+bool castRay(object& objs, ray& cam_ray, int& hit_type, int& hit_index, float& nt, float& nu, float& nv, vec3d& new_org, vec3d& normal, float& tx, float& ty) {
+
 	nt = INFINITY;
 	//check for triangle intersection
-	float temp;
-	
-//	for (int j = 0; j < objs.mesh1->bvhbox_count; j++)
-//	{
-//		if (Cubeintersects(cam_ray, temp, objs.mesh1->bvhbox[j])) {
+	float bvht = INFINITY;
+	for (int j = 0; j < objs.mesh1->bvhbox_count; j++)
+	{
+		float temp;
 
-			for (int i = 0; i < objs.mesh1->poly_count; i++)
-			{
-				float t, u, v;
+		if (objs.mesh1->d_box[j].d_bvhbox->intersect(cam_ray, temp)) {
+			
+			//if (temp < bvht) {
+				
+			//	bvht = temp;
 
-				if (objs.mesh1->rayIntersect(cam_ray, objs.mesh1->d_tri_arr[i], t, u, v))
+				for (int i = 0; i < objs.mesh1->d_box[j].length; i++)
 				{
+					float t, u, v;
 
-					if (t < nt)
+					if (objs.mesh1->rayIntersect(cam_ray, objs.mesh1->d_tri_arr[objs.mesh1->d_box[j].d_indexes[i]], t, u, v))
 					{
-						nt = t;
-						nv = v;
-						nu = u;
-						hit_index = i;//objs.mesh1->d_box[j].d_indexes[i];
-						hit_type = 0;
-					}
+						if (t < nt)
+						{
+							nt = t;
+							nv = v;
+							nu = u;
+							hit_index = objs.mesh1->d_box[j].d_indexes[i];//objs.mesh1->d_box[j].d_indexes[i];
+							hit_type = 0;
+						}
+		//			}
 				}
 			}
-//		}
-//	}
+		/*	if (temp < nt)
+			{
+				nt = temp;
+				
+				hit_index = objs.mesh1->d_box[j].d_indexes[0];//objs.mesh1->d_box[j].d_indexes[i];
+				hit_type = 0;
+			}*/
+	  }
+	}
 		//checkfor sphere intersection
 		for (int i = 0; i < objs.sphere_count; i++)
 		{
@@ -1266,6 +1391,7 @@ bool castRay(object &objs,ray &cam_ray,int &hit_type,int &hit_index,float &nt,fl
 
 			new_org = add(normal, add(cam_ray.Org, multiply(cam_ray.Dir, nt)));
 		}
+
 		//sphere hit
 		if (hit_type == 1) {
 
@@ -1343,21 +1469,33 @@ float castLightRay(object& objs, vec3d& start,light &l,vec3d &normal,int &seed) 
 		ray light_ray({ start,new_dir });
 	   
 		shadow = false;
-		
-		float temp;
 
 		//check for triangle intersection
-	for (int i = 0; i < objs.mesh1->poly_count; i++)
-	{
-		float t, u, v;
-		
-		if (objs.mesh1->rayIntersect(light_ray, objs.mesh1->d_tri_arr[i], t, u, v))
+
+		for (int j = 0; j < objs.mesh1->bvhbox_count; j++)
 		{
-			shadow = true;
-			break;
-	//		return true;
+			float temp;
+
+			if (objs.mesh1->d_box[j].bvhbox->intersect(light_ray, temp)) {
+
+
+				for (int i = 0; i < objs.mesh1->d_box[j].length; i++)
+				{
+					float t, u, v;
+
+					if (objs.mesh1->rayIntersect(light_ray, objs.mesh1->d_tri_arr[objs.mesh1->d_box[j].d_indexes[i]], t, u, v))
+					{
+						shadow = true;
+						break;
+						//		return true;
+					}
+				}
+				if (shadow) {
+					break;
+				}
+			}
 		}
-	}
+
 	if(!shadow)
 	//checkfor sphere intersection
 	for (int i = 0; i < objs.sphere_count; i++)
@@ -1472,6 +1610,7 @@ void globalilumnation(object &obj, ray &reflect_ray,float &r, float &g, float &b
 //	}
 
 }
+
 __global__ 
 void rayTrace(unsigned int* pixels, int width, int height, float aspect, object& objs, light* lights, int light_size, camera cam, skybox& sky) {
 
@@ -1553,25 +1692,25 @@ void rayTrace(unsigned int* pixels, int width, int height, float aspect, object&
 int light_size = 3;
 int tx =8, ty = 8;
 light* lights;
-camera cam({ 200,200,200 }, { 0.5, 0,1},0.f);
+camera cam({ 4,3,10 }, { 0, 0,1},0.f);
 
 int lightByteSize = sizeof(float) * 37*light_size;
 
 object* objs = new object();
 skybox* Skybox = new skybox("C:\\Users\\Leon\\Downloads\\sky_box.jpg",10000);
 float aspect = tan((90 * 0.5 * 3.1415) / 180);
-float yawY = 10,yawX = 0;
+float yawY = 0,yawX = 0;
 
 void onStart() {
 
-	objs->loadMesh("C:\\Users\\Leon\\Downloads\\.obj", "C:\\Users\\Leon\\Downloads\\wood.jpg", material(0,0,0));
+	objs->loadMesh("C:\\Users\\Leon\\Downloads\\skull2.obj", "C:\\Users\\Leon\\Downloads\\wood.jpg", material(0,0,0));
 
-	light m_light({ 0,50,50 }, 20, 1, 1, 1);
-	light b_light({ 0,50,-50 }, 20, 1, 1, 1);
-	light c_light({ 0,50,0 }, 20, 0, 0, 0);
+	light m_light({ 20,20,20 }, 20, 1, 0, 0);
+	light b_light({ 0,20,-20 }, 20, 0, 0, 1);
+	light c_light({ 0,20,0 }, 20, 0, 1, 0);
 
 	lights = new light[3]{ m_light ,b_light,c_light};
-
+	//cam.Camyaw = -80;
 }
 
 void checkKey() {
@@ -1657,5 +1796,4 @@ int main() {
 	while (true) {
 update();
 }
-	
-}*/
+}*/ 
